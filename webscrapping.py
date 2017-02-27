@@ -1,5 +1,6 @@
 # See interactive-debug-session.py for details of scraping
 
+# make code as python 3 compatible as possible
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import argparse
@@ -12,6 +13,10 @@ import sys
 import lxml.etree
 import requests
 import yaml
+
+if sys.version_info[0] != 3:
+    # FileNotFoundError does not exist in python 2
+    raise Exception('Only works with python 3')
 
 LOGGER = logging.getLogger()
 
