@@ -15,37 +15,39 @@ import yaml
 
 LOGGER = logging.getLogger()
 
+# Configuration
+CREDENTIALS_FILE = "credentials.yaml"
+
+def build_parser():
+    PARSER = argparse.ArgumentParser(description='Extract data from mynetdiary')
+    PARSER.add_argument('--debug', action='store_true', help='Print debug output')
+    PARSER.add_argument('--start-date', type=parse_date, default='2012-01-01', help='Fetch information from this date')
+    return PARSER
+
+
+def parse_date(string):
+    return datetime.datetime.strptime(string, '%Y-%m-%d')
+
 def extract_data(html_string):
     pattern = re.compile('.*measurementsPM = ([^;]*);',re.DOTALL)
     match = pattern.match(html_string)
     return match and match.groups()[0]
 
-# Configuration
-CREDENTIALS_FILE = "credentials.yaml"
-
-def parse_date(string):
-    return datetime.datetime.strptime(string, '%Y-%m-%d')
-
-PARSER = argparse.ArgumentParser(description='Extract data from mynetdiary')
-PARSER.add_argument('--debug', action='store_true', help='Print debug output')
-PARSER.add_argument('--start-date', type=parse_date, default='2012-01-01')
-args = PARSER.parse_args()
-
-
-
-try:
-    with open(CREDENTIALS_FILE, "r") as stream:
-        try:
-            credentials = yaml.load(stream)
-            logon_payload = {
-                'logonName': credentials['mynetdiary']['username'],
-                'password': credentials['mynetdiary']['password']
-            }
-        except yaml.YAMLError as error:
-            raise Exception('Error reading file: {0}'.format(CREDENTIALS_FILE))
-except FileNotFoundError:
-    print('Configuration file not found: {0}'.format(CREDENTIALS_FILE), file=sys.stderr)
-    sys.exit(ex)
+def load_credentials(credentials_file):
+    try:
+        with open(credentials_file, "r") as stream:
+            try:
+                credentials = yaml.load(stream)
+                logon_payload = {
+                    'logonName': credentials['mynetdiary']['username'],
+                    'password': credentials['mynetdiary']['password']
+                }
+                return logon_payload
+            except yaml.YAMLError:
+                raise Exception('Error reading file: {0}'.format(CREDENTIALS_FILE))
+    except FileNotFoundError:
+        print('Configuration file not found: {0}'.format(CREDENTIALS_FILE), file=sys.stderr)
+        sys.exit(ex)
 
 
 def day_series(start, end):
@@ -57,7 +59,6 @@ def info(message):
     print(message, file=sys.stderr)
 
 def fetch_weights(session, start_date):
-
     info('Get pages since : ${0}'.format(start_date))
 
     count_no_weight = 0
@@ -131,19 +132,21 @@ def fetch_nutrition(stream, session, start_date):
 
             print(','.join(values), file=stream)
 
-
 def main():
+    args = build_parser().parse_args()
+
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
 
     LOGGER.debug('Establishing session')
+    logon_payload = load_credentials(CREDENTIALS_FILE)
     with requests.Session() as session:
-        response = session.post("https://www.mynetdiary.com/logon.do", data=logon_payload)
+        session.post("https://www.mynetdiary.com/logon.do", data=logon_payload)
+
         fetch_weights(session, args.start_date)
 
         with open("nutrition.csv", "w") as nutrition_csv:
             fetch_nutrition(nutrition_csv, session, args.start_date)
-
 
 if __name__ == '__main__':
 	main()
