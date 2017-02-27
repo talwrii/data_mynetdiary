@@ -51,8 +51,7 @@ def load_credentials(credentials_file):
             except yaml.YAMLError:
                 raise Exception('Error reading file: {0}'.format(CREDENTIALS_FILE))
     except FileNotFoundError:
-        print('Configuration file not found: {0}'.format(CREDENTIALS_FILE), file=sys.stderr)
-        sys.exit(ex)
+        raise Exception('Configuration file not found: {0}'.format(CREDENTIALS_FILE))
 
 
 def day_series(start, end):
