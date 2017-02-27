@@ -12,7 +12,7 @@ It is kept simple enough, with embedded credentials (until I modify it a bit, bu
 
 Copy the `credentials.example.yaml` file into a `credentials.yaml` and modify it to configure your own username and password in [MyNetDiary](https://www.mynetdiary.com/).
 
-Execute `python webscrapping.py` to generated an `output.csv` result file with dates and weights.
+Execute `python webscrapping.py` to generated an `output.csv` result file with dates and weights, and a `nutrition.csv` result file with dates and nutritional information.
 
 You'll probably need to install the dependencies, which are described in `requirements.txt`. The simplest way is using `pip install -r requirements` on an isolated Virtualenv environment, but feel free to adapt this process as you fancy.
 
