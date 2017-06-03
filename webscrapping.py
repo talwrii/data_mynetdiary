@@ -306,9 +306,20 @@ def main():
             food_specifier = ' '.join(args.name)
             food_json = find_foods(session, food_specifier)
             if args.raw:
+                index = 0
                 for item in find_foods(session, food_specifier):
-                    print(json.dumps(item, indent=4))
-                    break
+                    if args.index is None:
+                        print(json.dumps(item, indent=4))
+                        break
+                    else:
+                        if not item['entries']:
+                            break
+
+                        for food_item in item['entries']:
+                            if index == args.index:
+                                print(json.dumps(food_item, indent=4))
+                                break
+                            index += 1
             else:
                 index = -1
                 for item in find_foods(session, food_specifier):
