@@ -12,6 +12,7 @@ import logging
 import re
 import sys
 
+import http
 import lxml.etree
 import lxml.html
 import lxml.html.clean
@@ -27,6 +28,8 @@ LOGGER = logging.getLogger()
 # Configuration
 CREDENTIALS_FILE = "credentials.yaml"
 
+TODAY = datetime.date.today()
+
 def build_parser():
     PARSER = argparse.ArgumentParser(description='Extract data from mynetdiary')
 
@@ -38,6 +41,10 @@ def build_parser():
     history_parser = parsers.add_parser('history', help='')
     history_parser.add_argument('--debug', action='store_true', help='Print debug output')
     history_parser.add_argument('--start-date', type=parse_date, default='2012-01-01', help='Fetch information from this date')
+
+    items_parser = parsers.add_parser('items', help='Show what you have eaten today')
+    items_parser.add_argument('--day', type=parse_date, help='Show items for this day', default=TODAY)
+    items_parser.add_argument('--raw', action='store_true', help='Show raw data')
 
     new_food_parser = parsers.add_parser('new-food', help='Create a new food')
     new_food_parser.add_argument('--name', type=str)
@@ -290,6 +297,7 @@ def main():
     args = build_parser().parse_args()
 
     if args.debug:
+        log_http()
         logging.basicConfig(level=logging.DEBUG)
 
     LOGGER.debug('Establishing session')
@@ -302,6 +310,48 @@ def main():
 
             with open("nutrition.csv", "w") as nutrition_csv:
                 fetch_nutrition(nutrition_csv, session, args.start_date)
+        elif args.command == 'items':
+            items = get_items(session, args.day)
+            if args.raw:
+                print(json.dumps(items, indent=4))
+            else:
+                headers = [header_string.split('<br/>')[0] for header_string in items['nutrColumnHeaders']]
+
+                bean_entries = [x for x in items['beanEntries'] if 'bean' in x]
+
+                for x in bean_entries:
+                    x['amount'], x['amount_string'] = parse_amount(x['amountResolved'])
+
+                if not bean_entries:
+                    return
+
+                desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
+                amount_width = max([len(x['amount_string']) for x in bean_entries])
+
+
+                for entry in bean_entries:
+                    nutrition = dict(zip(headers, map(float, [x or '-1' for x in entry['nutrValues']])))
+
+                    density = nutrition['Cals'] / entry['amount']
+
+                    energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
+                    energy_calories_density = energy_calories / entry['amount']
+
+                    columns = (
+                        ('name', entry['bean']['beanDesc'].ljust(desc_width)),
+                        ('amount', entry['amount_string'].ljust(amount_width)),
+                        ('non-protein calories', '{:5.1f}'.format(energy_calories)),
+                        ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
+                        ('calories', '{:8.0f}'.format(nutrition['Cals'])),
+                        ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
+                        ('fat', '{:5.1f}'.format(nutrition['Fat'])),
+                        ('protein', '{:5.1f}'.format(nutrition['Protein'])),
+                        ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
+                        ('density', '{:5.1f}'.format(density))
+                    )
+                    print(':'.join([c[0] for c in columns]))
+                    print(*[c[1] for c in columns])
+
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
             food_json = find_foods(session, food_specifier)
@@ -360,6 +410,41 @@ def lxml_to_text(html):
     doc = lxml.html.clean.clean_html(doc)
     return doc.text_content()
 
+def get_items(session, dt):
+    LOGGER.debug('Fetching data for %r', dt)
+    # Why would this be json?!
+    #curl 'http://www.mynetdiary.com/daily.do?date=20170601' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496382923.1496386317.24; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=rkTD82GiHepAyy42; JSESSIONID=ePQrD6nXbP0u; __utmc=190183351; WHICHSERVER=SRV128001; __utmb=190183351.2.10.1496386317; __utmt=1' -H 'Connection: keep-alive'
+    date_string = dt.strftime('%Y%m%d')
+    response = session.get('http://www.mynetdiary.com/daily.do?date={}'.format(date_string))
+    data = response.content.decode('utf8')
+    line, = [l for l in data.splitlines() if 'initialFoodGridPM' in l]
+    json_string = line.split('=')[1][1:-1]
+    return json.loads(json_string)
+
+
+def log_http():
+    http.client.HTTPConnection.debuglevel = 1
+
+    logging.getLogger().setLevel(logging.DEBUG)
+    requests_log = logging.getLogger("requests.packages.urllib3")
+    requests_log.setLevel(logging.DEBUG)
+    requests_log.propagate = True
+
+def parse_amount(string):
+    DIGITS = '0123456789.'
+    number = ''.join(itertools.takewhile(lambda x: x in DIGITS, string))
+    unit = string[len(number):]
+    factor, new_unit = CONVERSIONS[unit]
+    new_number = float(number) * factor
+    return new_number, '{:.1f}'.format(new_number) + ' ' + new_unit
+
+CONVERSIONS = {
+    'tbsp': (14.7868, 'ml'),
+    'g': (1, 'g'),
+}
+
+PROTEIN_CALS = 4
+FIBER_CALS = 2
 
 
 if __name__ == '__main__':
