@@ -84,8 +84,8 @@ def build_parser():
     GRAM_UNITS = singles_to_pairs(GRAM_UNITS)
 
     # milligrams
-    new_food_parser.add_argument('--caffeine', type=float, default='serving', nargs='*', help='Milligrams of caffeine')
-    new_food_parser.add_argument('--potassium', type=float, default='serving', nargs='*', help='Milligrams of potassium')
+    new_food_parser.add_argument('--caffeine', type=float, default=0, nargs='*', help='Milligrams of caffeine')
+    new_food_parser.add_argument('--potassium', type=float, default=0, nargs='*', help='Milligrams of potassium')
 
     # percent RDA
     PERCENT_VIT = [['A', ' vitamin a'], 'B6', 'B12', ['C', ' vitamin c'], ['D', ''], 'E', 'K']
@@ -286,8 +286,6 @@ def fetch_nutrition(stream, session, start_date):
 def find_foods(session, name):
     # Original request (from firefox)
     # curl 'http://www.mynetdiary.com/findFoods.do' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/javascript, text/html, application/xml, text/xml, */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'X-Requested-With: XMLHttpRequest' -H 'X-Prototype-Version: 1.5.0' -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496379979.1496382923.23; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=XXXXXX; JSESSIONID=XXXXXXXX; __utmc=190183351; WHICHSERVER=SRV118002; __utmb=190183351.2.10.1496382923; __utmt=1' -H 'Connection: keep-alive' --data 'beanInputString=bla&pageSize=15&pageNumber=1&highlightedTermClassName=sughtrm&detailsExpected=true'
-
-
     page_number = 1
     for page in itertools.count(1):
         constant_data = [('pageSize', '100'), ('highlightedTermClassName', 'sughtrm'), ('detailsExpected', 'true')]
@@ -376,6 +374,8 @@ def main():
                                 print(json.dumps(food_item, indent=4))
                                 break
                             index += 1
+
+
             else:
                 index = -1
                 for item in find_foods(session, food_specifier):
