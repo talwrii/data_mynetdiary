@@ -299,6 +299,53 @@ def find_foods(session, name):
         yield json.loads(data[11:])
 
 
+Amount = collections.namedtuple('Amount', 'number is_grams')
+
+class FoodParser(object):
+    def __init__(self, data):
+        self.data = data
+
+    def amount_string(self, amount=None):
+        amount = amount or details['dfSrv']['am']
+        amount_name = details['dfSrv']['desc']
+        return '{} {}'.format(amount, amount_name),
+
+
+def save_item(session, amount, details, parentBeanId):
+    # curl 'http://www.mynetdiary.com/dailyFoodSave.do' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/javascript, text/html, application/xml, text/xml, */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'X-Requested-With: XMLHttpRequest' -H 'X-Prototype-Version: 1.5.0' -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496386317.1496517505.25; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=rkTD82GiHepAyy42; JSESSIONID=fBfrKjhhIKqQ; WHICHSERVER=SRV118002; __utmb=190183351.1.10.1496517505; __utmc=190183351; __utmt=1' -H 'Connection: keep-alive' --data '{"parentBeanId":139410013,"beanEntryNo":101,"beanId":2156966,"beanInputString":"Fever tree tonic","amountInputString":"bottle","amountId":"1","mealTypeId":1,"calculateAmount":true}'
+
+    # TODO: parentbeanid is contained within the food grid
+    #   it identifies which day items are added to
+
+
+    #print(json.dumps(details, indent=4))
+
+
+    food_name = lxml_to_text(details['descForUi'])
+    parser = FoodParser(details)
+
+    if amount.is_grams:
+        amount_specifier = amount.number
+        amount_id = None
+    else:
+        amount_id = details['dfSrv']['id']
+        amount_specifier = parser.amount_string(amount)
+
+    # Adding gram amounts [reverse.md#Adding Grams]
+    response = session.post('http://www.mynetdiary.com/dailyFoodSave.do',
+        data=json.dumps(dict(
+            mealTypeId=1,
+            beanInputString=food_name,
+            beanId=details['beanId'],
+            beanEntryNo=101,
+            parentBeanId=parentBeanId,
+            amountInputString=amount_specifier,
+            amountId=amount_id,
+            calculateAmount=True)),
+            headers={'Content-Type': "application/x-www-form-urlencoded" })
+    response.raise_for_status()
+    print(response.status_code)
+    print(response.content)
 
 def main():
     args = build_parser().parse_args()
@@ -427,17 +474,33 @@ def external_fetch_detail(session, food):
         raise ValueError(food['source'])
 
 
-def format_food(item, detail):
+
+def format_food(item, detail, all_nutrients):
     result = []
     result.append(lxml_to_text(item["descForUi"]))
-    if detail:
+    parser = FoodParser(detail)
+    if all_nutrients:
+        print(json.dumps(item, indent=4))
+
+        for item in sorted(item['details'], key=lambda x: float(x['nutrValue']), reverse=True):
+            result.append('    {} {}{}'.format(item['nutrDesc'], item['nutrValue'], item['units']))
+
+    elif detail:
+        gramless = item.get("isGramless")
         for stat in item["details"]:
             if stat["nutrDesc"] == "Calories":
-                result.append("    Calories: {}".format(stat["nutrValue"]))
+                if gramless:
+                    result.append("    Calories: {} / {}".format(stat["nutrValue"], item["gramlessAmountMeasure"]))
+                else:
+                    result.append("    Calories: {} / 100 g".format(stat["nutrValue"]))
 
-        if item["isGramless"]:
-            result.append("    Amount: {}".format(item["gramlessAmountMeasure"]))
+        LOGGER.debug('Formatting food: %s', json.dumps(item, indent=4))
 
+            # unit = item["dfSrv"]
+            # unit_name = unit["desc"]
+            # unit_number = unit["am"]
+            # unit_grams = unit["gmWgt"]
+            # result.append("    Amount: ({}/100 grams)".format(unit_number, unit_name, unit_grams))
 
 
     return '\n'.join(result)
