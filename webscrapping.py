@@ -375,7 +375,6 @@ def main():
                         for food_item in item['entries']:
                             if index == args.index:
                                 print(json.dumps(food_item, indent=4))
-                                break
                             index += 1
 
 
