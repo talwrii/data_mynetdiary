@@ -2,3 +2,5 @@ credentials.yaml
 output.csv
 nutrition.csv
 .direnv
+.ropeproject
+
