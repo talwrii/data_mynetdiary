@@ -335,7 +335,6 @@ def main():
                 desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
                 amount_width = max([len(x['amount_string']) for x in bean_entries])
 
-
                 for entry in bean_entries:
                     nutrition = dict(zip(headers, map(float, [x or '-1' for x in entry['nutrValues']])))
 
@@ -376,8 +375,6 @@ def main():
                             if index == args.index:
                                 print(json.dumps(food_item, indent=4))
                             index += 1
-
-
             else:
                 index = -1
                 for item in find_foods(session, food_specifier):
@@ -390,7 +387,13 @@ def main():
                             continue
 
                         try:
-                            print(format_food(x, args.detail))
+                            if args.add:
+
+                                items = get_items(session, datetime.date.today())
+
+                                save_item(session, Amount(number=args.add, is_grams=True), x, items["parentBeanId"])
+                            else:
+                                print(format_food(x, args.detail, args.all))
                         except BrokenPipeError:
                             return
                 #print("\n".join(x["recentBeanDesc"] for x in food_json['entries']))
