@@ -403,7 +403,7 @@ def main():
                         ('density', '{:5.1f}'.format(density))
                     )
                     print(':'.join([c[0] for c in columns]))
-                    print(*[c[1] for c in columns])
+                    print(':'.join([c[1] for c in columns]))
 
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
