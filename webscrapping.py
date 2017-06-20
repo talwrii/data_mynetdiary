@@ -5,6 +5,7 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import argparse
+import collections
 import datetime
 import itertools
 import json
@@ -50,16 +51,18 @@ def build_parser():
     new_food_parser.add_argument('--name', type=str)
 
     food_parser = parsers.add_parser('ext-food', help='Look up foods from another source')
-    food_parser.add_argument('source', type=str, help='Source of food information', choices=('mfp'))
+    food_parser.add_argument('source', type=str, help='Source of food information', choices=('mfp',))
     food_parser.add_argument('name', nargs='*', help='Name of food source')
     food_parser.add_argument('--index', type=int, help='Only show item with this index')
     food_parser.add_argument('--detail', action='store_true', help='Show details about food')
 
-    food_parser = parsers.add_parser('food', help='Search food database')
+    food_parser = parsers.add_parser('food', help='Search foods and add them')
     food_parser.add_argument('name', type=str, help='Substring of the food you want to search', nargs='+')
     food_parser.add_argument('--raw', action='store_true', help='Output raw json')
     food_parser.add_argument('--index', type=int, help='Only show this item')
     food_parser.add_argument('--detail', action='store_true', help='Output information about foods')
+    food_parser.add_argument('--add', type=float, help='Add this many units of this food')
+    food_parser.add_argument('--all', action='store_true', help='Output all nutritional information')
 
     GRAM_UNITS = [
         'calories',
