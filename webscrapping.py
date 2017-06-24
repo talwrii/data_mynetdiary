@@ -6,10 +6,12 @@ from __future__ import (absolute_import, division, print_function,
 
 import argparse
 import collections
+import contextlib
 import datetime
 import itertools
 import json
 import logging
+import pprint
 import re
 import sys
 
@@ -46,15 +48,19 @@ def build_parser():
     items_parser = parsers.add_parser('items', help='Show what you have eaten today')
     items_parser.add_argument('--day', type=parse_date, help='Show items for this day', default=TODAY)
     items_parser.add_argument('--raw', action='store_true', help='Show raw data')
+    items_parser.add_argument('--index', type=int, help='Select this index')
+    items_parser.add_argument('--delete', action='store_true', help='Delete items')
 
     new_food_parser = parsers.add_parser('new-food', help='Create a new food')
     new_food_parser.add_argument('--name', type=str)
 
     food_parser = parsers.add_parser('ext-food', help='Look up foods from another source')
-    food_parser.add_argument('source', type=str, help='Source of food information', choices=('mfp',))
+    food_parser.add_argument('source', type=str, help='Source of food information', choices=('mfp', 'tesco'))
     food_parser.add_argument('name', nargs='*', help='Name of food source')
     food_parser.add_argument('--index', type=int, help='Only show item with this index')
     food_parser.add_argument('--detail', action='store_true', help='Show details about food')
+    food_parser.add_argument('--url', type=str, help='Get the food for this url')
+
 
     food_parser = parsers.add_parser('food', help='Search foods and add them')
     food_parser.add_argument('name', type=str, help='Substring of the food you want to search', nargs='+')
@@ -302,50 +308,98 @@ def find_foods(session, name):
 Amount = collections.namedtuple('Amount', 'number is_grams')
 
 class FoodParser(object):
+    "Parse the entry for a type of food."
     def __init__(self, data):
         self.data = data
 
     def amount_string(self, amount=None):
-        amount = amount or details['dfSrv']['am']
-        amount_name = details['dfSrv']['desc']
+        amount = amount or self.data['dfSrv']['am']
+        amount_name = self.data['dfSrv']['desc']
         return '{} {}'.format(amount, amount_name),
 
+    def bean_id(self):
+        return self.data['beanId']
 
-def save_item(session, amount, details, parentBeanId):
+    def food_name(self):
+        return lxml_to_text(self.data['descForUi'])
+
+    def dump(self):
+        return self.data
+
+    def amount_id(self):
+        return self.data['dfSrv']['id']
+
+class HistoryParser(object):
+    def __init__(self, data):
+        self.data = data
+
+    def bean_id(self):
+        raise NotImplementedError()
+
+    def food_name(self):
+        raise NotImplementedError()
+
+    def dump(self):
+        raise NotImplementedError()
+
+    def amount_id(self):
+        raise NotImplementedError()
+    def amount_string(self):
+        raise NotImplementedError()
+
+def save_item(session, amount, parser, items):
     # curl 'http://www.mynetdiary.com/dailyFoodSave.do' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/javascript, text/html, application/xml, text/xml, */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'X-Requested-With: XMLHttpRequest' -H 'X-Prototype-Version: 1.5.0' -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496386317.1496517505.25; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=rkTD82GiHepAyy42; JSESSIONID=fBfrKjhhIKqQ; WHICHSERVER=SRV118002; __utmb=190183351.1.10.1496517505; __utmc=190183351; __utmt=1' -H 'Connection: keep-alive' --data '{"parentBeanId":139410013,"beanEntryNo":101,"beanId":2156966,"beanInputString":"Fever tree tonic","amountInputString":"bottle","amountId":"1","mealTypeId":1,"calculateAmount":true}'
 
     # TODO: parentbeanid is contained within the food grid
     #   it identifies which day items are added to
 
+    parent_bean_id = items["parentBeanId"]
 
     #print(json.dumps(details, indent=4))
 
+    LOGGER.debug('Saving : food_type=%s', parser.dump())
 
-    food_name = lxml_to_text(details['descForUi'])
-    parser = FoodParser(details)
 
-    if amount.is_grams:
+    
+    if amount is None:
+        amount_specifier = None
+        amount_id = None
+    elif amount.is_grams:
         amount_specifier = amount.number
         amount_id = None
     else:
-        amount_id = details['dfSrv']['id']
+        amount_id = detail.amount_id()
         amount_specifier = parser.amount_string(amount)
+
+
+    number_of_entries = len(items['beanEntries'])
+    entry_number_id = '1{:02}'.format(number_of_entries)
 
     # Adding gram amounts [reverse.md#Adding Grams]
     response = session.post('http://www.mynetdiary.com/dailyFoodSave.do',
         data=json.dumps(dict(
             mealTypeId=1,
-            beanInputString=food_name,
-            beanId=details['beanId'],
-            beanEntryNo=101,
-            parentBeanId=parentBeanId,
+            beanInputString=parser.food_name(),
+            beanId=parser.bean_id(),
+            beanEntryNo=entry_number_id,
+            parent_bean_id=parent_bean_id,
             amountInputString=amount_specifier,
             amountId=amount_id,
             calculateAmount=True)),
             headers={'Content-Type': "application/x-www-form-urlencoded" })
     response.raise_for_status()
-    print(response.status_code)
-    print(response.content)
+
+    #print(response.status_code)
+    #print(response.content)
+
+
+@contextlib.contextmanager
+def log_on_error(*args):
+    "Context manager which logs if an error occures"
+    try:
+        yield
+    except:
+        logging.exception(*args)
 
 def main():
     args = build_parser().parse_args()
@@ -372,8 +426,8 @@ def main():
                 headers = [header_string.split('<br/>')[0] for header_string in items['nutrColumnHeaders']]
 
                 bean_entries = [x for x in items['beanEntries'] if 'bean' in x]
-
                 for x in bean_entries:
+                    pprint.pprint(x)
                     x['amount'], x['amount_string'] = parse_amount(x['amountResolved'])
 
                 if not bean_entries:
@@ -382,7 +436,14 @@ def main():
                 desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
                 amount_width = max([len(x['amount_string']) for x in bean_entries])
 
-                for entry in bean_entries:
+                columns_printed = False
+                for index, entry in enumerate(bean_entries):
+                    if args.index and index != args.index:
+                        continue
+
+                    if args.delete:
+                        save_item(session, None, entry, items)
+
                     nutrition = dict(zip(headers, map(float, [x or '-1' for x in entry['nutrValues']])))
 
                     density = nutrition['Cals'] / entry['amount']
@@ -393,17 +454,23 @@ def main():
                     columns = (
                         ('name', entry['bean']['beanDesc'].ljust(desc_width)),
                         ('amount', entry['amount_string'].ljust(amount_width)),
+                        ('calories', '{:8.0f}'.format(nutrition['Cals'])),
                         ('non-protein calories', '{:5.1f}'.format(energy_calories)),
                         ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
-                        ('calories', '{:8.0f}'.format(nutrition['Cals'])),
                         ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
                         ('fat', '{:5.1f}'.format(nutrition['Fat'])),
                         ('protein', '{:5.1f}'.format(nutrition['Protein'])),
                         ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
                         ('density', '{:5.1f}'.format(density))
                     )
-                    print(':'.join([c[0] for c in columns]))
+
+                    if not columns_printed:
+                        print(':'.join([c[0] for c in columns]))
+                        columns_printed = True
+
                     print(':'.join([c[1] for c in columns]))
+
+
 
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
@@ -435,10 +502,8 @@ def main():
 
                         try:
                             if args.add:
-
                                 items = get_items(session, datetime.date.today())
-
-                                save_item(session, Amount(number=args.add, is_grams=True), x, items["parentBeanId"])
+                                save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
                             else:
                                 print(format_food(x, args.detail, args.all))
                         except BrokenPipeError:
@@ -447,24 +512,36 @@ def main():
 
         elif args.command == 'ext-food':
             if args.source == 'mfp':
+                if args.url is not None:
+                    raise NotImplementedError()
                 name = ' '.join(args.name)
                 foods = list(mfp_foods(session, name))
+            elif args.source == 'tesco':
+                if args.url is None:
+                    raise Exception('tesco only supports urls')
             else:
                 raise ValueError(args.source)
 
-            if args.index is not None:
-                foods = [foods[args.index]]
+            if args.url:
+                details = external_food_from_url(session, args.source, args.url)
+                show_external_food(details)
+            else:
+                if args.index is not None:
+                    foods = [foods[args.index]]
 
-            for food in foods:
-                print(food['name'])
-                if args.detail:
-                    details = external_fetch_detail(session, food)
-                    for k, v in details.items():
-                        print('    {}: {}'.format(k, v))
+                for food in foods:
+                    print(food['name'])
+                    if args.detail:
+                        details = external_fetch_detail(session, food)
+                    show_external_food(details)
 
 
         else:
             raise ValueError(args.command)
+
+def show_external_food(details):
+    for k, v in details.items():
+        print('    {}: {}'.format(k, v))
 
 
 def external_fetch_detail(session, food):
@@ -473,6 +550,40 @@ def external_fetch_detail(session, food):
     else:
         raise ValueError(food['source'])
 
+def external_food_from_url(session, source, url):
+    if source != 'tesco':
+    	raise ValueError(source)
+
+    data = session.get(url).content
+    tree = lxml.etree.HTML(data)
+    _header, *rows, _reference = tree.xpath('//table[caption/text()="Nutrition"]/descendant::tr')
+    result = dict()
+
+
+    title_string, *_ = tree.xpath('//span[@data-title="true"]/text()')
+    name, amount_string = title_string.rsplit(' ', 1)
+
+
+    result['name'] = name
+    result['amount'] = initial_digits(amount_string)
+
+    for row in rows:
+        nutrient, = row.xpath('th/text()')
+        per_hundred_grams, _serving  = row.xpath('td/text()')
+
+        if nutrient == 'Energy':
+            value_string = re.search(r"\(([0-9.]+)kcal\)", per_hundred_grams).group(1)
+        elif per_hundred_grams.startswith('<'):
+            value_string = '0'
+        else:
+            value_string = per_hundred_grams
+
+
+        result[nutrient] = float(initial_digits(value_string))
+
+    return result
+
+
 
 
 def format_food(item, detail, all_nutrients):
@@ -480,7 +591,7 @@ def format_food(item, detail, all_nutrients):
     result.append(lxml_to_text(item["descForUi"]))
     parser = FoodParser(detail)
     if all_nutrients:
-        print(json.dumps(item, indent=4))
+        #print(json.dumps(item, indent=4))
 
         for item in sorted(item['details'], key=lambda x: float(x['nutrValue']), reverse=True):
             result.append('    {} {}{}'.format(item['nutrDesc'], item['nutrValue'], item['units']))
@@ -548,9 +659,6 @@ def mfp_fetch_detail(session, food):
 
     pairs = [(name, float(initial_digits(amount))) for name, amount in pairs if name.strip()]
     return dict(pairs)
-
-
-
 
 def log_http():
     http.client.HTTPConnection.debuglevel = 1
