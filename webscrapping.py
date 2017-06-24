@@ -22,6 +22,10 @@ import lxml.html.clean
 import requests
 import yaml
 
+from . import mynetdiary
+from . import tesco
+from . import fitnesspal
+
 if sys.version_info[0] != 3:
     # FileNotFoundError does not exist in python 2
     raise Exception('Only works with python 3')
@@ -182,7 +186,6 @@ def add_food(args):
 # customFoodId=0
 # contributed=false
 # sourceFoodId='
-    return PARSER
 
 
 def parse_date(string):
@@ -292,19 +295,6 @@ def fetch_nutrition(stream, session, start_date):
             print(','.join(values), file=stream)
 
 
-def find_foods(session, name):
-    # Original request (from firefox)
-    # curl 'http://www.mynetdiary.com/findFoods.do' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/javascript, text/html, application/xml, text/xml, */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'X-Requested-With: XMLHttpRequest' -H 'X-Prototype-Version: 1.5.0' -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496379979.1496382923.23; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=XXXXXX; JSESSIONID=XXXXXXXX; __utmc=190183351; WHICHSERVER=SRV118002; __utmb=190183351.2.10.1496382923; __utmt=1' -H 'Connection: keep-alive' --data 'beanInputString=bla&pageSize=15&pageNumber=1&highlightedTermClassName=sughtrm&detailsExpected=true'
-    page_number = 1
-    for page in itertools.count(1):
-        constant_data = [('pageSize', '100'), ('highlightedTermClassName', 'sughtrm'), ('detailsExpected', 'true')]
-        data = session.post('http://www.mynetdiary.com/findFoods.do', data=[("beanInputString", name), ('pageNumber', str(page))] + constant_data)
-        data = data.content.decode('utf8')
-        if data[:12] ==  "OK `+`json":
-            raise Exception('Request format wrong')
-        yield json.loads(data[11:])
-
-
 Amount = collections.namedtuple('Amount', 'number is_grams')
 
 class FoodParser(object):
@@ -347,51 +337,6 @@ class HistoryParser(object):
     def amount_string(self):
         raise NotImplementedError()
 
-def save_item(session, amount, parser, items):
-    # curl 'http://www.mynetdiary.com/dailyFoodSave.do' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/javascript, text/html, application/xml, text/xml, */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'X-Requested-With: XMLHttpRequest' -H 'X-Prototype-Version: 1.5.0' -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496386317.1496517505.25; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=rkTD82GiHepAyy42; JSESSIONID=fBfrKjhhIKqQ; WHICHSERVER=SRV118002; __utmb=190183351.1.10.1496517505; __utmc=190183351; __utmt=1' -H 'Connection: keep-alive' --data '{"parentBeanId":139410013,"beanEntryNo":101,"beanId":2156966,"beanInputString":"Fever tree tonic","amountInputString":"bottle","amountId":"1","mealTypeId":1,"calculateAmount":true}'
-
-    # TODO: parentbeanid is contained within the food grid
-    #   it identifies which day items are added to
-
-    parent_bean_id = items["parentBeanId"]
-
-    #print(json.dumps(details, indent=4))
-
-    LOGGER.debug('Saving : food_type=%s', parser.dump())
-
-
-    
-    if amount is None:
-        amount_specifier = None
-        amount_id = None
-    elif amount.is_grams:
-        amount_specifier = amount.number
-        amount_id = None
-    else:
-        amount_id = detail.amount_id()
-        amount_specifier = parser.amount_string(amount)
-
-
-    number_of_entries = len(items['beanEntries'])
-    entry_number_id = '1{:02}'.format(number_of_entries)
-
-    # Adding gram amounts [reverse.md#Adding Grams]
-    response = session.post('http://www.mynetdiary.com/dailyFoodSave.do',
-        data=json.dumps(dict(
-            mealTypeId=1,
-            beanInputString=parser.food_name(),
-            beanId=parser.bean_id(),
-            beanEntryNo=entry_number_id,
-            parent_bean_id=parent_bean_id,
-            amountInputString=amount_specifier,
-            amountId=amount_id,
-            calculateAmount=True)),
-            headers={'Content-Type': "application/x-www-form-urlencoded" })
-    response.raise_for_status()
-
-    #print(response.status_code)
-    #print(response.content)
-
 
 @contextlib.contextmanager
 def log_on_error(*args):
@@ -419,7 +364,7 @@ def main():
             with open("nutrition.csv", "w") as nutrition_csv:
                 fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
-            items = get_items(session, args.day)
+            items = mynetdiary.get_eaten_items(session, args.day)
             if args.raw:
                 print(json.dumps(items, indent=4))
             else:
@@ -442,7 +387,7 @@ def main():
                         continue
 
                     if args.delete:
-                        save_item(session, None, entry, items)
+                        mynetdiary.save_item(session, None, entry, items)
 
                     nutrition = dict(zip(headers, map(float, [x or '-1' for x in entry['nutrValues']])))
 
@@ -474,10 +419,10 @@ def main():
 
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
-            food_json = find_foods(session, food_specifier)
+            food_json = mynetdiary.find_foods(session, food_specifier)
             if args.raw:
                 index = 0
-                for item in find_foods(session, food_specifier):
+                for item in mynetdiary.find_foods(session, food_specifier):
                     if args.index is None:
                         print(json.dumps(item, indent=4))
                         break
@@ -491,7 +436,7 @@ def main():
                             index += 1
             else:
                 index = -1
-                for item in find_foods(session, food_specifier):
+                for item in mynetdiary.find_foods(session, food_specifier):
                     if not item["entries"]:
                         break
 
@@ -502,8 +447,8 @@ def main():
 
                         try:
                             if args.add:
-                                items = get_items(session, datetime.date.today())
-                                save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
+                                items = mynetdiary.get_eaten_items(session, datetime.date.today())
+                                mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
                             else:
                                 print(format_food(x, args.detail, args.all))
                         except BrokenPipeError:
@@ -515,7 +460,7 @@ def main():
                 if args.url is not None:
                     raise NotImplementedError()
                 name = ' '.join(args.name)
-                foods = list(mfp_foods(session, name))
+                foods = list(fitnesspal.foods(session, name))
             elif args.source == 'tesco':
                 if args.url is None:
                     raise Exception('tesco only supports urls')
@@ -534,8 +479,6 @@ def main():
                     if args.detail:
                         details = external_fetch_detail(session, food)
                     show_external_food(details)
-
-
         else:
             raise ValueError(args.command)
 
@@ -546,7 +489,7 @@ def show_external_food(details):
 
 def external_fetch_detail(session, food):
     if food['source'] == 'mfp':
-        return mfp_fetch_detail(session, food)
+        return fitnesspal.fetch_detail(session, food)
     else:
         raise ValueError(food['source'])
 
@@ -554,36 +497,7 @@ def external_food_from_url(session, source, url):
     if source != 'tesco':
     	raise ValueError(source)
 
-    data = session.get(url).content
-    tree = lxml.etree.HTML(data)
-    _header, *rows, _reference = tree.xpath('//table[caption/text()="Nutrition"]/descendant::tr')
-    result = dict()
-
-
-    title_string, *_ = tree.xpath('//span[@data-title="true"]/text()')
-    name, amount_string = title_string.rsplit(' ', 1)
-
-
-    result['name'] = name
-    result['amount'] = initial_digits(amount_string)
-
-    for row in rows:
-        nutrient, = row.xpath('th/text()')
-        per_hundred_grams, _serving  = row.xpath('td/text()')
-
-        if nutrient == 'Energy':
-            value_string = re.search(r"\(([0-9.]+)kcal\)", per_hundred_grams).group(1)
-        elif per_hundred_grams.startswith('<'):
-            value_string = '0'
-        else:
-            value_string = per_hundred_grams
-
-
-        result[nutrient] = float(initial_digits(value_string))
-
-    return result
-
-
+    return tesco.parse_url(url)
 
 
 def format_food(item, detail, all_nutrients):
@@ -621,44 +535,7 @@ def lxml_to_text(html):
     doc = lxml.html.clean.clean_html(doc)
     return doc.text_content()
 
-def get_items(session, dt):
-    LOGGER.debug('Fetching data for %r', dt)
-    # Why would this be json?!
-    #curl 'http://www.mynetdiary.com/daily.do?date=20170601' -H 'Host: www.mynetdiary.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'Referer: http://www.mynetdiary.com/daily.do' -H 'Cookie: __utma=190183351.107001975.1486834740.1496382923.1496386317.24; __utmz=190183351.1488146888.3.3.utmcsr=duckduckgo.com|utmccn=(referral)|utmcmd=referral|utmcct=/; __unam=596c074-15a2e43c3ca-4e397692-4; partnerId=0; _ga=GA1.2.107001975.1486834740; rememberMe=rkTD82GiHepAyy42; JSESSIONID=ePQrD6nXbP0u; __utmc=190183351; WHICHSERVER=SRV128001; __utmb=190183351.2.10.1496386317; __utmt=1' -H 'Connection: keep-alive'
-    date_string = dt.strftime('%Y%m%d')
-    response = session.get('http://www.mynetdiary.com/daily.do?date={}'.format(date_string))
-    data = response.content.decode('utf8')
-    line, = [l for l in data.splitlines() if 'initialFoodGridPM' in l]
-    json_string = line.split('=')[1][1:-1]
-    return json.loads(json_string)
 
-def mfp_foods(session, name):
-    #curl 'http://www.myfitnesspal.com/food/search' -H 'Host: www.myfitnesspal.com' -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'DNT: 1' -H 'Referer: http://www.myfitnesspal.com/food/search' -H 'Cookie: tracker=id%3D%3E%7Cuser_id%3D%3E%7Csource%3D%3E%7Csource_domain%3D%3E%7Ckeywords%3D%3E%7Cclicked_at%3D%3E2017-02-08+23%3A40%3A43+%2B0000%7Clanding_page%3D%3Ehttps%3A%2F%2Fwww.myfitnesspal.com%2Faccount%2Fcreate%7Csearch_engine%3D%3E%7Clp_category%3D%3E%7Clp_subcategory%3D%3E%7Ccp%3D%3E%7Ccr%3D%3E%7Cs1%3D%3E%7Cs2%3D%3E%7Ckw%3D%3E%7Cmt%3D%3E; premium_logged_out_homepage=ddf5b4973e1f43353b3fb9529df6d52e; premium_upsell_comparison=ddf5b4973e1f43353b3fb9529df6d52e; __utma=213187976.1307283245.1486597244.1486610496.1496602026.3; __utmz=213187976.1486610496.2.2.utmcsr=community.myfitnesspal.com|utmccn=(referral)|utmcmd=referral|utmcct=/en/discussion/10484608/im-nervous-about-my-first-free-meal-help/p2; _ga=GA1.2.1307283245.1486597244; p=qvI4BNZKfVK5d1MVXBNDMmQ3; known_user=124439094; __utmv=213187976.member|1=status=logged_in=1; _dy_soct=94589.128722.1496602026*47418.60107.1496603065; ki_t=1486597271294%3B1496602026487%3B1496603067855%3B2%3B17; ki_r=; _session_id=BAh7CEkiD3Nlc3Npb25faWQGOgZFVEkiJTZhNGZjOGE2ZTQzZDBiZmFhMWQ4ZDFiNmUyMDc1MzgyBjsAVEkiEGV4cGlyeV90aW1lBjsARlU6IEFjdGl2ZVN1cHBvcnQ6OlRpbWVXaXRoWm9uZVsISXU6CVRpbWUNlVQdwM29iREJOg1uYW5vX251bWkCfwE6DW5hbm9fZGVuaQY6DXN1Ym1pY3JvIgc4MDoJem9uZUkiCFVUQwY7AEZJIh9FYXN0ZXJuIFRpbWUgKFVTICYgQ2FuYWRhKQY7AFRJdTsHDZFUHcDNvYkRCTsIaQJ%2FATsJaQY7CiIHODA7C0kiCFVUQwY7AEZJIhBfY3NyZl90b2tlbgY7AEZJIjFkS1JReTBJZUpYRUttdlVLeGhoNHgvdHBiM2JJcGU5UDJ3bXdNNzFsYUV3PQY7AEY%3D--55cdb9d95d99618749761af717c38b56c90c4d1b; __utmb=213187976.18.10.1496602026; __utmc=213187976; _dy_csc_ses=t; _dy_ses_load_seq=21629%3A1496603065654; _dy_c_exps=; mobile_seo_test_guid=f870467b-8f6d-a68a-c755-9276a4aff19f; _gid=GA1.2.86490987.1496602027; _dycst=dk.l.f.ms.frv4.tos.; _dyus_8766792=174%7C0%7C0%7C0%7C0%7C0.0.1486597271157.1496603067772.10005796.0%7C154%7C23%7C5%7C117%7C16%7C0%7C0%7C0%7C0%7C0%7C0%7C16%7C0%7C0%7C0%7C0%7C0%7C16%7C0%7C0%7C0%7C1%7C0; _dy_geo=GB.EU.GB_.GB__; _dy_df_geo=United%20Kingdom..; _dy_toffset=0; _gat_UA-273418-97=1; __utmt=1; _dc_gtm_UA-273418-97=1' -H 'Connection: keep-alive' -H 'Cache-Control: max-age=0' --data 'utf8=%E2%9C%93&authenticity_token=dKRQy0IeJXEKmvUKxhh4x%2Ftpb3bIpe9P2wmwM71laEw%3D&search=marks+and+spencers+goats+cheese+square&commit=Search'
-    response = session.post('http://www.myfitnesspal.com/food/search',
-                     data=dict(search=name, commit='Search'))
-    tree = lxml.etree.HTML(response.content.decode('utf8'))
-    items = []
-    for xml_item in tree.xpath('//div[@class="food_info"]'):
-        link, = xml_item.xpath('div[@class="food_description"]/a[position()=1]')
-        brand, = xml_item.xpath('div[@class="food_description"]/a[position()=2]/text()')
-        name, = link.xpath('text()')
-        url, = link.xpath('@href')
-        url = 'http://www.myfitnesspal.com' + url
-        item = dict(name=name + ':' + brand, url=url, source='mfp')
-        yield item
-
-def mfp_fetch_detail(session, food):
-    url = food['url']
-    response = session.get(food['url'])
-    tree = lxml.etree.HTML(response.content)
-    table, = tree.xpath('//table[@id="nutrition-facts"]')
-    pairs = []
-    for row in table.xpath('/descendant::tr'):
-        cells = row.xpath('td/text()')
-        pairs.extend(list(zip(cells[0::2], cells[1::2])))
-
-    pairs = [(name, float(initial_digits(amount))) for name, amount in pairs if name.strip()]
-    return dict(pairs)
 
 def log_http():
     http.client.HTTPConnection.debuglevel = 1
@@ -670,7 +547,6 @@ def log_http():
 
 
 def parse_amount(string):
-
     number = initial_digits(string)
 
     unit = string[len(number):]
