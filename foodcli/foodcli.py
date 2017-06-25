@@ -283,7 +283,8 @@ class FoodParser(object):
         return self.data['dfSrv']['id']
 
 class HistoryParser(object):
-    def __init__(self, data):
+    def __init__(self, headers, data):
+        self.headers = headers
         self.data = data
 
     def bean_id(self):
@@ -302,6 +303,17 @@ class HistoryParser(object):
 
     def entry_number_id(self):
         return self.data['beanEntryKey']['beanEntryNo']
+
+    def amount(self):
+        amount, _amount_string = parse_amount(self.data['amountResolved'])
+        return amount
+
+    def amount_string(self):
+        _amount, amount_string = parse_amount(self.data['amountResolved'])
+        return amount_string
+
+    def nutrition(self):
+         return dict(zip(self.headers, map(comma_float, [x or '-1' for x in self.data['nutrValues']])))
 
 
 @contextlib.contextmanager
@@ -339,42 +351,36 @@ def main():
                 mynetdiary.fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
             items = mynetdiary.get_eaten_items(session, args.day)
+            parser = ItemsParser(items)
+
             with log_on_error('Raw items: %s', pprint.pformat(items)):
                 if args.raw:
                     print(json.dumps(items, indent=4))
                 else:
-                    headers = [header_string.split('<br/>')[0] for header_string in items['nutrColumnHeaders']]
-
-                    bean_entries = [x for x in items['beanEntries'] if 'bean' in x]
-                    for x in bean_entries:
-                        #print('x')
-                        #pprint.pprint(x)
-                        x['amount'], x['amount_string'] = parse_amount(x['amountResolved'])
-
-                    if not bean_entries:
+                    if not parser.entries():
                         return
 
-                    desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
-                    amount_width = max([len(x['amount_string']) for x in bean_entries])
+                    desc_width = max([len(x.food_name()) for x in parser.entries()])
+                    amount_width = max([len(x.amount_string()) for x in parser.entries()])
 
                     columns_printed = False
-                    for index, entry in enumerate(bean_entries):
+
+                    for index, entry in enumerate(parser.entries()):
                         if args.index and index != args.index:
                             continue
 
                         if args.delete:
-                            mynetdiary.save_item(session, None, HistoryParser(entry), items)
+                            mynetdiary.save_item(session, None, entry, items)
 
-                        nutrition = dict(zip(headers, map(comma_float, [x or '-1' for x in entry['nutrValues']])))
-
-                        density = nutrition['Cals'] / entry['amount']
+                        nutrition = entry.nutrition()
+                        density = nutrition['Cals'] / entry.amount()
 
                         energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
-                        energy_calories_density = energy_calories / entry['amount']
+                        energy_calories_density = energy_calories / entry.amount()
 
                         columns = (
-                            ('name', entry['bean']['beanDesc'].ljust(desc_width)),
-                            ('amount', entry['amount_string'].ljust(amount_width)),
+                            ('name', entry.food_name().ljust(desc_width)),
+                            ('amount', entry.amount_string().ljust(amount_width)),
                             ('calories', '{:8.0f}'.format(nutrition['Cals'])),
                             ('non-protein calories', '{:5.1f}'.format(energy_calories)),
                             ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
@@ -433,8 +439,6 @@ def main():
                             elif args.add:
                                 items = mynetdiary.get_eaten_items(session, datetime.date.today())
                                 mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
-
-
 
                             else:
                                 print(format_food(x, args.detail, args.all))
