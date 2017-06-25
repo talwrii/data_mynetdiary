@@ -305,11 +305,7 @@ def main():
                     if not parser.entries():
                         return
 
-                    desc_width = max([len(x.food_name()) for x in parser.entries()])
-                    amount_width = max([len(x.amount_string()) for x in parser.entries()])
-
-                    columns_printed = False
-
+                    formatter = EntryFormatter(parser.entries())
                     for index, entry in enumerate(parser.entries()):
                         if args.index and index != args.index:
                             continue
@@ -317,31 +313,7 @@ def main():
                         if args.delete:
                             mynetdiary.save_item(session, None, entry, items)
 
-                        nutrition = entry.nutrition()
-                        density = nutrition['Cals'] / entry.amount()
-
-                        energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
-                        energy_calories_density = energy_calories / entry.amount()
-
-                        columns = (
-                            ('name', entry.food_name().ljust(desc_width)),
-                            ('amount', entry.amount_string().ljust(amount_width)),
-                            ('calories', '{:8.0f}'.format(nutrition['Cals'])),
-                            ('non-protein calories', '{:5.1f}'.format(energy_calories)),
-                            ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
-                            ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
-                            ('fat', '{:5.1f}'.format(nutrition['Fat'])),
-                            ('protein', '{:5.1f}'.format(nutrition['Protein'])),
-                            ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
-                            ('density', '{:5.1f}'.format(density))
-                        )
-
-                        if not columns_printed:
-                            print(':'.join([c[0] for c in columns]))
-                            columns_printed = True
-
-                        print(':'.join([c[1] for c in columns]))
-
+                        print(formatter.format_column(entry))
 
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
@@ -479,6 +451,40 @@ def log_http():
     requests_log.setLevel(logging.DEBUG)
     requests_log.propagate = True
 
+
+class EntryFormatter(object):
+    def __init__(self, entries):
+        self.desc_width = max([len(x.food_name()) for x in entries])
+        self.amount_width = max([len(x.amount_string()) for x in entries])
+        self.columns_printed = False
+
+    def format_column(self, entry):
+        nutrition = entry.nutrition()
+        density = nutrition['Cals'] / entry.amount()
+
+        energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
+        energy_calories_density = energy_calories / entry.amount()
+
+        columns = (
+            ('name', entry.food_name().ljust(self.desc_width)),
+            ('amount', entry.amount_string().ljust(self.amount_width)),
+            ('calories', '{:8.0f}'.format(nutrition['Cals'])),
+            ('non-protein calories', '{:5.1f}'.format(energy_calories)),
+            ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
+            ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
+            ('fat', '{:5.1f}'.format(nutrition['Fat'])),
+            ('protein', '{:5.1f}'.format(nutrition['Protein'])),
+            ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
+            ('density', '{:5.1f}'.format(density))
+        )
+        result = []
+
+        if not self.columns_printed:
+            result.append(':'.join([c[0] for c in columns]))
+            self.columns_printed = True
+
+        result.append(':'.join([c[1] for c in columns]))
+        return '\n'.join(result)
 
 
 PROTEIN_CALS = 4
