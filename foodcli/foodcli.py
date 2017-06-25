@@ -257,49 +257,6 @@ def fetch_weights(session, start_date):
 
     info("{0}/{1} pages contained no weight".format(count_no_weight, count_pages))
 
-def fetch_nutrition(stream, session, start_date):
-    headings = None
-    for date in day_series(start_date, datetime.date.today()):
-        LOGGER.debug('Fetching nutritional information for %r', date)
-
-        date_string = date.strftime('%Y-%m-%d')
-        page = session.post('http://www.mynetdiary.com/reportRefresh.do', dict(personUserId='', period='periodCustom', periodFake='period7d', details='allFoods', nutrients='allNutrients', navigation='blah', startDate=date_string, endDate=date_string))
-        tree = lxml.etree.HTML(page.text)
-        table, = tree.xpath('//table[@class="report"]')
-        new_headings = ['date', 'food', 'serving', 'amount'] + [x.replace(' column', '') for x in table.xpath('.//thead/tr/td/@title')]
-
-        if not headings:
-            headings = new_headings
-            print(','.join(headings), file=stream)
-
-        if headings != new_headings:
-            raise Exception('Inconsistent headings across pages %r', (headings, new_headings))
-
-        for row in table.xpath('.//tr'):
-            NON_BREAKING_SPACE = '\xa0'
-            values = [v.replace(NON_BREAKING_SPACE, '').strip() for v in row.xpath('.//td/text()')]
-
-            if len(values) in (1, 2):
-                continue
-
-            if len(values) == len(headings) - 3:
-                if 'over' in values[0] and 'period' in values[0]:
-                    # Averages over the period,2250,1,54,330,111,,22,3,3,,1296,301,29,99,,191,,,,,,,,,,,,,,,,,,,,,,,2,,,,,,,,,320
-                    print('averaging', file=stream)
-                    values = ['DAILY_SUM', '', ''] + values[1:]
-                elif 'percentage' in values[0]:
-                    # Calories percentage,,,22%,59%,20%,0%,9%,1%,1%,,,,0%,18%,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-                    values = ['DAILY_PERCENT', '', ''] + values[1:]
-                else:
-                    raise ValueError((values, headings))
-
-            values.insert(0, date.date().isoformat())
-
-            if len(headings) != len(values):
-                raise ValueError((len(headings), len(values), headings, values))
-
-            print(','.join(values), file=stream)
-
 
 Amount = collections.namedtuple('Amount', 'number is_grams')
 
@@ -379,7 +336,7 @@ def main():
         elif args.command == 'history':
             fetch_weights(session, args.start_date)
             with open("nutrition.csv", "w") as nutrition_csv:
-                fetch_nutrition(nutrition_csv, session, args.start_date)
+                mynetdiary.fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
             items = mynetdiary.get_eaten_items(session, args.day)
             with log_on_error('Raw items: %s', pprint.pformat(items)):
