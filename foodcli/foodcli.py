@@ -22,7 +22,7 @@ import lxml.html.clean
 import requests
 import yaml
 
-from . import fitnesspal, mynetdiary, tesco, parse_utils
+from . import fitnesspal, mynetdiary, parse_utils, load
 
 if sys.version_info[0] != 3:
     # FileNotFoundError does not exist in python 2
@@ -355,43 +355,6 @@ def log_on_error(*args):
     except:
         logging.exception(*args)
 
-def parse_information(data):
-    output = dict(data)
-    if 'weight' in output:
-        output['serving1Weight'] = output.pop('weight')
-        output['serving1Name'] = output.pop('unit')
-
-    if 'fat' in output:
-        output['totalFatG'] = output.pop('fat')
-
-    if 'carb' in output:
-        output['totalCarbsG'] = output.pop('carb')
-
-    if 'sugar' in output:
-        output['sugarsG'] = output.pop('sugar')
-
-    if 'protein' in output:
-        output['proteinG'] = output.pop('protein')
-
-    if 'sat' in output:
-        output['satFatG'] = output.pop('sat')
-
-    if 'salt' in output:
-        output['sodiumMg'] = str(float(output.pop('salt')) / 2.5)
-
-    if 'name' in output:
-        output['customFoodName'] = output.pop('name')
-
-    if 'per' in output:
-        weight = float(output['serving1Weight'])
-        per = output.pop('per')
-        for x in output:
-            if output[x].isdigit():
-                output[x] = str(float(output[x]) * weight / float(per))
-
-
-    return output
-
 def main():
     args = build_parser().parse_args()
 
@@ -411,11 +374,10 @@ def main():
                 with open(args.file) as stream:
                     raw_information = json.load(stream)
 
-                food_information = parse_information(raw_information)
+                food_information = load.parse_information(raw_information)
                 mynetdiary.create_food(session, food_information)
         elif args.command == 'history':
             fetch_weights(session, args.start_date)
-
             with open("nutrition.csv", "w") as nutrition_csv:
                 fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
