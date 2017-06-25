@@ -22,7 +22,7 @@ import lxml.html.clean
 import requests
 import yaml
 
-from . import fitnesspal, mynetdiary, parse_utils, load
+from . import fitnesspal, mynetdiary, load, parse_utils, mynetdiary_parser
 
 if sys.version_info[0] != 3:
     # FileNotFoundError does not exist in python 2
@@ -260,61 +260,6 @@ def fetch_weights(session, start_date):
 
 Amount = collections.namedtuple('Amount', 'number is_grams')
 
-class FoodParser(object):
-    "Parse the entry for a type of food."
-    def __init__(self, data):
-        self.data = data
-
-    def amount_string(self, amount=None):
-        amount = amount or self.data['dfSrv']['am']
-        amount_name = self.data['dfSrv']['desc']
-        return '{} {}'.format(amount, amount_name),
-
-    def bean_id(self):
-        return self.data['beanId']
-
-    def food_name(self):
-        return lxml_to_text(self.data['descForUi'])
-
-    def dump(self):
-        return self.data
-
-    def amount_id(self):
-        return self.data['dfSrv']['id']
-
-class HistoryParser(object):
-    def __init__(self, headers, data):
-        self.headers = headers
-        self.data = data
-
-    def bean_id(self):
-        return self.data['bean']['beanId']
-
-    def food_name(self):
-        return self.data['bean']['beanDesc']
-
-    def dump(self):
-        return self.data
-
-    def amount_id(self):
-        raise NotImplementedError()
-    def amount_string(self):
-        raise NotImplementedError()
-
-    def entry_number_id(self):
-        return self.data['beanEntryKey']['beanEntryNo']
-
-    def amount(self):
-        amount, _amount_string = parse_amount(self.data['amountResolved'])
-        return amount
-
-    def amount_string(self):
-        _amount, amount_string = parse_amount(self.data['amountResolved'])
-        return amount_string
-
-    def nutrition(self):
-         return dict(zip(self.headers, map(comma_float, [x or '-1' for x in self.data['nutrValues']])))
-
 
 @contextlib.contextmanager
 def log_on_error(*args):
@@ -351,7 +296,7 @@ def main():
                 mynetdiary.fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
             items = mynetdiary.get_eaten_items(session, args.day)
-            parser = ItemsParser(items)
+            parser = mynetdiary_parser.ItemsParser(items)
 
             with log_on_error('Raw items: %s', pprint.pformat(items)):
                 if args.raw:
@@ -438,7 +383,7 @@ def main():
                                 items = mynetdiary.delete_food(session, x['beanId'])
                             elif args.add:
                                 items = mynetdiary.get_eaten_items(session, datetime.date.today())
-                                mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
+                                mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), mynetdiary_parser.FoodParser(x), items)
 
                             else:
                                 print(format_food(x, args.detail, args.all))
@@ -499,9 +444,8 @@ def format_food(item, detail, all_nutrients):
     else:
         serving_string = ''
 
-
-    result.append('{} (per {}) (serving {})'.format(lxml_to_text(item["descForUi"]), amount_string, serving_string))
-    parser = FoodParser(item)
+    result.append('{} (per {}) (serving {})'.format(parse_utils.lxml_to_text(item["descForUi"]), amount_string, serving_string))
+    parser = mynetdiary_parser.FoodParser(item)
     if all_nutrients:
         #print(json.dumps(item, indent=4))
 
@@ -535,23 +479,7 @@ def log_http():
     requests_log.setLevel(logging.DEBUG)
     requests_log.propagate = True
 
-def parse_amount(string):
-    number = parse_utils.initial_digits(string)
 
-    unit = string[len(number):]
-    factor, new_unit = CONVERSIONS.get(unit, (1, 'unit'))
-    new_number = float(number) * factor
-    return new_number, '{:.1f}'.format(new_number) + ' ' + new_unit
-
-def comma_float(x):
-    return float(x.replace(',', ''))
-
-
-
-CONVERSIONS = {
-    'tbsp': (14.7868, 'ml'),
-    'g': (1, 'g'),
-}
 
 PROTEIN_CALS = 4
 FIBER_CALS = 2
