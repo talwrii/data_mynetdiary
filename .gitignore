@@ -4,3 +4,4 @@ nutrition.csv
 .direnv
 .ropeproject
 
+*.egg-info

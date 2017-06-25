@@ -3,6 +3,7 @@
 import itertools
 import json
 import logging
+import pprint
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,33 +29,53 @@ def save_item(session, amount, parser, items):
 
     #print(json.dumps(details, indent=4))
 
-    LOGGER.debug('Saving : food_type=%s', parser.dump())
+    LOGGER.debug('Saving : food_type=%s', pprint.pformat(parser.dump()))
 
     if amount is None:
         amount_specifier = None
         amount_id = None
     elif amount.is_grams:
-        amount_specifier = amount.number
+        amount_specifier = str(amount.number)
         amount_id = None
     else:
         amount_id = parser.amount_id()
         amount_specifier = parser.amount_string(amount)
 
+#    for x in items['beanEntries']:
+#        if 'bean' in x:
+#            print(x['bean'].keys())
 
-    number_of_entries = len(items['beanEntries'])
-    entry_number_id = '1{:02}'.format(number_of_entries)
+    currents_ids = set([x['beanEntryKey']['beanEntryNo'] for x in items['beanEntries'] if 'bean' in x])
+    #print(pprint.pformat(items['beanEntries']))
 
-    # Adding gram amounts [reverse.md#Adding Grams]
-    response = session.post('http://www.mynetdiary.com/dailyFoodSave.do',
-        data=json.dumps(dict(
+    if amount is not None:
+        for i in range(1, 100):
+            entry_number_id = int('1{:02}'.format(i))
+            if entry_number_id not in currents_ids:
+                break
+        else:
+            raise Exception('Could not find exception')
+    else:
+        entry_number_id = parser.entry_number_id()
+
+    post_data = dict(
             mealTypeId=1,
             beanInputString=parser.food_name(),
-            beanId=parser.bean_id(),
+            beanId=amount and parser.bean_id(),
             beanEntryNo=entry_number_id,
-            parent_bean_id=parent_bean_id,
+            parentBeanId=parent_bean_id,
             amountInputString=amount_specifier,
-            amountId=amount_id,
-            calculateAmount=True)),
+            amountId=amount and amount_id,
+            calculateAmount=True)
+
+    if amount is None:
+        post_data['amountResolved'] = None
+
+
+    LOGGER.debug('Post data: %s', pprint.pformat(post_data))
+    # Adding gram amounts [reverse.md#Adding Grams]
+    response = session.post('http://www.mynetdiary.com/dailyFoodSave.do',
+        data=json.dumps(post_data),
             headers={'Content-Type': "application/x-www-form-urlencoded" })
     response.raise_for_status()
 
@@ -72,3 +93,31 @@ def find_foods(session, name):
         if data[:12] ==  "OK `+`json":
             raise Exception('Request format wrong')
         yield json.loads(data[11:])
+
+
+def create_food(session, information):
+    required_keys = set(['customFoodName'])
+
+    allowed_keys = ['customFoodName', 'serving1Name', 'serving1Weight', 'foodGroupId', 'calories', 'totalFatG', 'satFatG', 'polyUnsatFatG', 'monoUnsatFatG', 'transFatG', 'cholMg', 'sodiumMg', 'totalCarbsG', 'dietaryFiberG', 'sugarsG', 'sugarAlcoholG', 'proteinG', 'vitaminAPercent', 'vitaminCPercent', 'calciumPercent', 'ironPercent', 'caffeineMg', 'waterG', 'alcoholEthylG', 'starchG', 'potassiumMg', 'vitaminDPercent', 'vitaminB6Percent', 'vitaminB12Percent', 'vitaminEPercent', 'vitaminKPercent', 'thiaminPercent', 'riboflavinPercent', 'niacinPercent', 'folatePercent', 'panthothenicAcidPercent', 'phosphorusPercent', 'magnesiumPercent', 'zincPercent', 'seleniumPercent', 'cooperPercent', 'manganesePercent', 'customFoodId', 'contributed', 'sorceFoodId']
+
+    missing_keys = set(required_keys) - set(information.keys())
+    if missing_keys:
+        raise Exception('information need keys: {}'.format(missing_keys))
+
+    unknown_keys = set(information.keys()) - set(allowed_keys)
+    if unknown_keys:
+        raise Exception('Information contains unknown keys: {}'.format(unknown_keys))
+
+    for key in allowed_keys:
+        if key not in information:
+            information[key] = ''
+
+    response = session.post('http://www.mynetdiary.com/customFoodUpdate.do', data=information)
+    #print(response.content)
+
+def delete_food(session, bean_id):
+
+    raw_data = 'value={}'.format(bean_id)
+    #print(raw_data)
+
+    session.post('http://www.mynetdiary.com/retireUserFood.do', data=raw_data)

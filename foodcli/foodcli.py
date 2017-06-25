@@ -8,9 +8,9 @@ import argparse
 import collections
 import contextlib
 import datetime
-import itertools
 import json
 import logging
+import os
 import pprint
 import re
 import sys
@@ -22,9 +22,7 @@ import lxml.html.clean
 import requests
 import yaml
 
-from . import mynetdiary
-from . import tesco
-from . import fitnesspal
+from . import fitnesspal, mynetdiary, tesco, parse_utils
 
 if sys.version_info[0] != 3:
     # FileNotFoundError does not exist in python 2
@@ -33,14 +31,19 @@ if sys.version_info[0] != 3:
 LOGGER = logging.getLogger()
 
 # Configuration
-CREDENTIALS_FILE = "credentials.yaml"
-
 TODAY = datetime.date.today()
+
+
+DEFAULT_CONFIG_DIR =  os.path.join(os.environ['HOME'], '.config', 'foodcli')
+if not os.path.isdir(DEFAULT_CONFIG_DIR):
+   os.mkdir(DEFAULT_CONFIG_DIR)
+
 
 def build_parser():
     PARSER = argparse.ArgumentParser(description='Extract data from mynetdiary')
 
     PARSER.add_argument('--debug', action='store_true', help='Print debug output')
+    PARSER.add_argument('--config-dir', type=str, help='Configuration directory', default=DEFAULT_CONFIG_DIR)
 
     parsers = PARSER.add_subparsers(dest='command')
 
@@ -55,24 +58,27 @@ def build_parser():
     items_parser.add_argument('--index', type=int, help='Select this index')
     items_parser.add_argument('--delete', action='store_true', help='Delete items')
 
-    new_food_parser = parsers.add_parser('new-food', help='Create a new food')
-    new_food_parser.add_argument('--name', type=str)
 
-    food_parser = parsers.add_parser('ext-food', help='Look up foods from another source')
-    food_parser.add_argument('source', type=str, help='Source of food information', choices=('mfp', 'tesco'))
-    food_parser.add_argument('name', nargs='*', help='Name of food source')
-    food_parser.add_argument('--index', type=int, help='Only show item with this index')
-    food_parser.add_argument('--detail', action='store_true', help='Show details about food')
-    food_parser.add_argument('--url', type=str, help='Get the food for this url')
-
+    ext_food = parsers.add_parser('ext-food', help='Look up foods from another source')
+    ext_food.add_argument('source', type=str, help='Source of food information', choices=('mfp', 'tesco'))
+    ext_food.add_argument('name', nargs='*', help='Name of food source')
+    ext_food.add_argument('--index', type=int, help='Only show item with this index')
+    ext_food.add_argument('--detail', action='store_true', help='Show details about food')
+    ext_food.add_argument('--url', type=str, help='Get the food for this url')
+    ext_food.add_argument('--create', action='store_true', help='Create a new food form this item')
 
     food_parser = parsers.add_parser('food', help='Search foods and add them')
     food_parser.add_argument('name', type=str, help='Substring of the food you want to search', nargs='+')
     food_parser.add_argument('--raw', action='store_true', help='Output raw json')
+    food_parser.add_argument('--delete', action='store_true', help='Delete this food')
     food_parser.add_argument('--index', type=int, help='Only show this item')
     food_parser.add_argument('--detail', action='store_true', help='Output information about foods')
     food_parser.add_argument('--add', type=float, help='Add this many units of this food')
     food_parser.add_argument('--all', action='store_true', help='Output all nutritional information')
+
+    new_food_parser = parsers.add_parser('new', help='Create a new food')
+    new_food_parser.add_argument('--name', type=str)
+    new_food_parser.add_argument('--file', type=str, help='Read food information from this file')
 
     GRAM_UNITS = [
         'calories',
@@ -207,9 +213,9 @@ def load_credentials(credentials_file):
                 }
                 return logon_payload
             except yaml.YAMLError:
-                raise Exception('Error reading file: {0}'.format(CREDENTIALS_FILE))
+                raise Exception('Error reading file: {0}'.format(credentials_file))
     except FileNotFoundError:
-        raise Exception('Configuration file not found: {0}'.format(CREDENTIALS_FILE))
+        raise Exception('Configuration file not found: {0}'.format(credentials_file))
 
 
 def day_series(start, end):
@@ -324,18 +330,21 @@ class HistoryParser(object):
         self.data = data
 
     def bean_id(self):
-        raise NotImplementedError()
+        return self.data['bean']['beanId']
 
     def food_name(self):
-        raise NotImplementedError()
+        return self.data['bean']['beanDesc']
 
     def dump(self):
-        raise NotImplementedError()
+        return self.data
 
     def amount_id(self):
         raise NotImplementedError()
     def amount_string(self):
         raise NotImplementedError()
+
+    def entry_number_id(self):
+        return self.data['beanEntryKey']['beanEntryNo']
 
 
 @contextlib.contextmanager
@@ -346,6 +355,43 @@ def log_on_error(*args):
     except:
         logging.exception(*args)
 
+def parse_information(data):
+    output = dict(data)
+    if 'weight' in output:
+        output['serving1Weight'] = output.pop('weight')
+        output['serving1Name'] = output.pop('unit')
+
+    if 'fat' in output:
+        output['totalFatG'] = output.pop('fat')
+
+    if 'carb' in output:
+        output['totalCarbsG'] = output.pop('carb')
+
+    if 'sugar' in output:
+        output['sugarsG'] = output.pop('sugar')
+
+    if 'protein' in output:
+        output['proteinG'] = output.pop('protein')
+
+    if 'sat' in output:
+        output['satFatG'] = output.pop('sat')
+
+    if 'salt' in output:
+        output['sodiumMg'] = str(float(output.pop('salt')) / 2.5)
+
+    if 'name' in output:
+        output['customFoodName'] = output.pop('name')
+
+    if 'per' in output:
+        weight = float(output['serving1Weight'])
+        per = output.pop('per')
+        for x in output:
+            if output[x].isdigit():
+                output[x] = str(float(output[x]) * weight / float(per))
+
+
+    return output
+
 def main():
     args = build_parser().parse_args()
 
@@ -353,68 +399,78 @@ def main():
         log_http()
         logging.basicConfig(level=logging.DEBUG)
 
+    credentials = os.path.join(args.config_dir, 'credentials.yaml')
+
     LOGGER.debug('Establishing session')
-    logon_payload = load_credentials(CREDENTIALS_FILE)
+    logon_payload = load_credentials(credentials)
     with requests.Session() as session:
         session.post("https://www.mynetdiary.com/logon.do", data=logon_payload)
 
-        if args.command == 'history':
+        if args.command == 'new':
+            if args.file:
+                with open(args.file) as stream:
+                    raw_information = json.load(stream)
+
+                food_information = parse_information(raw_information)
+                mynetdiary.create_food(session, food_information)
+        elif args.command == 'history':
             fetch_weights(session, args.start_date)
 
             with open("nutrition.csv", "w") as nutrition_csv:
                 fetch_nutrition(nutrition_csv, session, args.start_date)
         elif args.command == 'items':
             items = mynetdiary.get_eaten_items(session, args.day)
-            if args.raw:
-                print(json.dumps(items, indent=4))
-            else:
-                headers = [header_string.split('<br/>')[0] for header_string in items['nutrColumnHeaders']]
+            with log_on_error('Raw items: %s', pprint.pformat(items)):
+                if args.raw:
+                    print(json.dumps(items, indent=4))
+                else:
+                    headers = [header_string.split('<br/>')[0] for header_string in items['nutrColumnHeaders']]
 
-                bean_entries = [x for x in items['beanEntries'] if 'bean' in x]
-                for x in bean_entries:
-                    pprint.pprint(x)
-                    x['amount'], x['amount_string'] = parse_amount(x['amountResolved'])
+                    bean_entries = [x for x in items['beanEntries'] if 'bean' in x]
+                    for x in bean_entries:
+                        #print('x')
+                        #pprint.pprint(x)
+                        x['amount'], x['amount_string'] = parse_amount(x['amountResolved'])
 
-                if not bean_entries:
-                    return
+                    if not bean_entries:
+                        return
 
-                desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
-                amount_width = max([len(x['amount_string']) for x in bean_entries])
+                    desc_width = max([len(x['bean']['beanDesc']) for x in bean_entries])
+                    amount_width = max([len(x['amount_string']) for x in bean_entries])
 
-                columns_printed = False
-                for index, entry in enumerate(bean_entries):
-                    if args.index and index != args.index:
-                        continue
+                    columns_printed = False
+                    for index, entry in enumerate(bean_entries):
+                        if args.index and index != args.index:
+                            continue
 
-                    if args.delete:
-                        mynetdiary.save_item(session, None, entry, items)
+                        if args.delete:
+                            mynetdiary.save_item(session, None, HistoryParser(entry), items)
 
-                    nutrition = dict(zip(headers, map(float, [x or '-1' for x in entry['nutrValues']])))
+                        nutrition = dict(zip(headers, map(comma_float, [x or '-1' for x in entry['nutrValues']])))
 
-                    density = nutrition['Cals'] / entry['amount']
+                        density = nutrition['Cals'] / entry['amount']
 
-                    energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
-                    energy_calories_density = energy_calories / entry['amount']
+                        energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
+                        energy_calories_density = energy_calories / entry['amount']
 
-                    columns = (
-                        ('name', entry['bean']['beanDesc'].ljust(desc_width)),
-                        ('amount', entry['amount_string'].ljust(amount_width)),
-                        ('calories', '{:8.0f}'.format(nutrition['Cals'])),
-                        ('non-protein calories', '{:5.1f}'.format(energy_calories)),
-                        ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
-                        ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
-                        ('fat', '{:5.1f}'.format(nutrition['Fat'])),
-                        ('protein', '{:5.1f}'.format(nutrition['Protein'])),
-                        ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
-                        ('density', '{:5.1f}'.format(density))
-                    )
+                        columns = (
+                            ('name', entry['bean']['beanDesc'].ljust(desc_width)),
+                            ('amount', entry['amount_string'].ljust(amount_width)),
+                            ('calories', '{:8.0f}'.format(nutrition['Cals'])),
+                            ('non-protein calories', '{:5.1f}'.format(energy_calories)),
+                            ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
+                            ('carbs', '{:5.1f}'.format(nutrition['Carbs'])),
+                            ('fat', '{:5.1f}'.format(nutrition['Fat'])),
+                            ('protein', '{:5.1f}'.format(nutrition['Protein'])),
+                            ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
+                            ('density', '{:5.1f}'.format(density))
+                        )
 
-                    if not columns_printed:
-                        print(':'.join([c[0] for c in columns]))
-                        columns_printed = True
+                        if not columns_printed:
+                            print(':'.join([c[0] for c in columns]))
+                            columns_printed = True
 
-                    print(':'.join([c[1] for c in columns]))
-
+                        print(':'.join([c[1] for c in columns]))
 
 
         elif args.command == 'food':
@@ -436,19 +492,31 @@ def main():
                             index += 1
             else:
                 index = -1
+                finished = False
                 for item in mynetdiary.find_foods(session, food_specifier):
                     if not item["entries"]:
                         break
 
+                    if finished:
+                        break
+
                     for x in item["entries"]:
                         index += 1
-                        if args.index is not None and index != args.index:
+                        if args.index is not None and index < args.index:
                             continue
+                        elif args.index is not None and index > args.index:
+                            finished = True
+                            break
 
                         try:
-                            if args.add:
+                            if args.delete:
+                                items = mynetdiary.delete_food(session, x['beanId'])
+                            elif args.add:
                                 items = mynetdiary.get_eaten_items(session, datetime.date.today())
                                 mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), FoodParser(x), items)
+
+
+
                             else:
                                 print(format_food(x, args.detail, args.all))
                         except BrokenPipeError:
@@ -478,7 +546,10 @@ def main():
                     print(food['name'])
                     if args.detail:
                         details = external_fetch_detail(session, food)
-                    show_external_food(details)
+                        show_external_food(details)
+
+            if args.create:
+                details = external_create_food(session, details)
         else:
             raise ValueError(args.command)
 
@@ -502,8 +573,26 @@ def external_food_from_url(session, source, url):
 
 def format_food(item, detail, all_nutrients):
     result = []
-    result.append(lxml_to_text(item["descForUi"]))
-    parser = FoodParser(detail)
+
+    gramless = item.get("isGramless")
+    if gramless:
+        amount_string = item["gramlessAmountMeasure"]
+        mutliplier = 1
+    else:
+        multiplier = 1
+        amount_string = '100 grams'
+
+    if 'dfSrv' in item:
+        if not gramless:
+            serving_string = '{}: {}g'.format(item['dfSrv']['desc'], item['dfSrv']['gmWgt'])
+        else:
+            serving_string = '{}'.format(item['dfSrv']['desc'])
+    else:
+        serving_string = ''
+
+
+    result.append('{} (per {}) (serving {})'.format(lxml_to_text(item["descForUi"]), amount_string, serving_string))
+    parser = FoodParser(item)
     if all_nutrients:
         #print(json.dumps(item, indent=4))
 
@@ -511,13 +600,9 @@ def format_food(item, detail, all_nutrients):
             result.append('    {} {}{}'.format(item['nutrDesc'], item['nutrValue'], item['units']))
 
     elif detail:
-        gramless = item.get("isGramless")
         for stat in item["details"]:
             if stat["nutrDesc"] == "Calories":
-                if gramless:
-                    result.append("    Calories: {} / {}".format(stat["nutrValue"], item["gramlessAmountMeasure"]))
-                else:
-                    result.append("    Calories: {} / 100 g".format(stat["nutrValue"]))
+                result.append("    Calories: {}".format(stat["nutrValue"]))
 
         LOGGER.debug('Formatting food: %s', json.dumps(item, indent=4))
 
@@ -526,16 +611,12 @@ def format_food(item, detail, all_nutrients):
             # unit_number = unit["am"]
             # unit_grams = unit["gmWgt"]
             # result.append("    Amount: ({}/100 grams)".format(unit_number, unit_name, unit_grams))
-
-
     return '\n'.join(result)
 
 def lxml_to_text(html):
     doc = lxml.html.fromstring(html)
     doc = lxml.html.clean.clean_html(doc)
     return doc.text_content()
-
-
 
 def log_http():
     http.client.HTTPConnection.debuglevel = 1
@@ -545,18 +626,17 @@ def log_http():
     requests_log.setLevel(logging.DEBUG)
     requests_log.propagate = True
 
-
 def parse_amount(string):
-    number = initial_digits(string)
+    number = parse_utils.initial_digits(string)
 
     unit = string[len(number):]
-    factor, new_unit = CONVERSIONS[unit]
+    factor, new_unit = CONVERSIONS.get(unit, (1, 'unit'))
     new_number = float(number) * factor
     return new_number, '{:.1f}'.format(new_number) + ' ' + new_unit
 
-def initial_digits(string):
-    DIGITS = '0123456789.'
-    return ''.join(itertools.takewhile(lambda x: x in DIGITS, string))
+def comma_float(x):
+    return float(x.replace(',', ''))
+
 
 
 CONVERSIONS = {
@@ -566,6 +646,8 @@ CONVERSIONS = {
 
 PROTEIN_CALS = 4
 FIBER_CALS = 2
+
+
 
 
 if __name__ == '__main__':
