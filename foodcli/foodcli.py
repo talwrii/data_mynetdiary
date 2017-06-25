@@ -536,7 +536,7 @@ def main():
                 raise ValueError(args.source)
 
             if args.url:
-                details = external_food_from_url(session, args.source, args.url)
+                details = external.food_from_url(session, args.source, args.url)
                 show_external_food(details)
             else:
                 if args.index is not None:
@@ -545,7 +545,7 @@ def main():
                 for food in foods:
                     print(food['name'])
                     if args.detail:
-                        details = external_fetch_detail(session, food)
+                        details = external.fetch_detail(session, food)
                         show_external_food(details)
 
             if args.create:
@@ -556,20 +556,6 @@ def main():
 def show_external_food(details):
     for k, v in details.items():
         print('    {}: {}'.format(k, v))
-
-
-def external_fetch_detail(session, food):
-    if food['source'] == 'mfp':
-        return fitnesspal.fetch_detail(session, food)
-    else:
-        raise ValueError(food['source'])
-
-def external_food_from_url(session, source, url):
-    if source != 'tesco':
-    	raise ValueError(source)
-
-    return tesco.parse_url(url)
-
 
 def format_food(item, detail, all_nutrients):
     result = []
