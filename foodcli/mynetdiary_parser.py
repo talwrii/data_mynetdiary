@@ -1,4 +1,4 @@
-from . import parse_utils
+from . import parse_utils, types
 
 class ItemsParser(object):
     def __init__(self, data):
@@ -52,9 +52,13 @@ class HistoryParser(object):
     def entry_number_id(self):
         return self.data['beanEntryKey']['beanEntryNo']
 
-    def amount(self):
+    def amount_value(self):
         amount, _amount_string = parse_amount(self.data['amountResolved'])
         return amount
+
+    def amount(self):
+        is_grams = not self.data.get('isGramless')
+        return types.Amount(number=self.amount_value(), is_grams=is_grams)
 
     def amount_string(self):
         _amount, amount_string = parse_amount(self.data['amountResolved'])

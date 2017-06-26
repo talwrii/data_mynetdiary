@@ -16,13 +16,10 @@ import re
 import sys
 
 import http
-import lxml.etree
-import lxml.html
-import lxml.html.clean
 import requests
 import yaml
 
-from . import fitnesspal, mynetdiary, load, parse_utils, mynetdiary_parser
+from . import fitnesspal, mynetdiary, load, parse_utils, mynetdiary_parser, types
 
 if sys.version_info[0] != 3:
     # FileNotFoundError does not exist in python 2
@@ -56,8 +53,11 @@ def build_parser():
     items_parser.add_argument('--day', type=parse_date, help='Show items for this day', default=TODAY)
     items_parser.add_argument('--raw', action='store_true', help='Show raw data')
     items_parser.add_argument('--index', type=int, help='Select this index')
-    items_parser.add_argument('--delete', action='store_true', help='Delete items')
 
+    items_action = items_parser.add_mutually_exclusive_group()
+    items_action.add_argument('--delete', action='store_true', help='Delete items')
+    items_action.add_argument('--add', action='store_true', help='Add this item to todays food')
+    items_parser.add_argument('search', type=str, help='Only show foods matching all these search terms', nargs='*')
 
     ext_food = parsers.add_parser('ext-food', help='Look up foods from another source')
     ext_food.add_argument('source', type=str, help='Source of food information', choices=('mfp', 'tesco'))
@@ -72,10 +72,14 @@ def build_parser():
     food_parser.add_argument('--raw', action='store_true', help='Output raw json')
     food_parser.add_argument('--delete', action='store_true', help='Delete this food')
     food_parser.add_argument('--index', type=int, help='Only show this item')
-    food_parser.add_argument('--detail', action='store_true', help='Output information about foods')
     food_parser.add_argument('--add', type=float, help='Add this many units of this food')
-    food_parser.add_argument('--all', action='store_true', help='Output all nutritional information')
 
+    food_parser_unit = food_parser.add_mutually_exclusive_group()
+    food_parser_unit.add_argument('--detail', action='store_true', help='Output information about foods')
+    food_parser_unit.add_argument('--all', action='store_true', help='Output all nutritional information')
+    food_parser_unit.add_argument('--json', action='store_true', help='Output data as json')
+
+    total_parser = parsers.add_parser('total', help='Search foods and add them')
     new_food_parser = parsers.add_parser('new', help='Create a new food')
     new_food_parser.add_argument('--name', type=str)
     new_food_parser.add_argument('--file', type=str, help='Read food information from this file')
@@ -258,7 +262,6 @@ def fetch_weights(session, start_date):
     info("{0}/{1} pages contained no weight".format(count_no_weight, count_pages))
 
 
-Amount = collections.namedtuple('Amount', 'number is_grams')
 
 
 @contextlib.contextmanager
@@ -306,12 +309,21 @@ def main():
                         return
 
                     formatter = EntryFormatter(parser.entries())
+
                     for index, entry in enumerate(parser.entries()):
                         if args.index and index != args.index:
                             continue
 
+                        if args.search:
+                            if any(not re.search(s, entry.food_name()) for s in args.search):
+                                continue
+
+
                         if args.delete:
                             mynetdiary.save_item(session, None, entry, items)
+                        elif args.add:
+                            todays_items = mynetdiary.get_eaten_items(session, datetime.date.today())
+                            mynetdiary.save_item(session, entry.amount(), entry, todays_items)
 
                         print(formatter.format_column(entry))
 
@@ -355,10 +367,10 @@ def main():
                                 items = mynetdiary.delete_food(session, x['beanId'])
                             elif args.add:
                                 items = mynetdiary.get_eaten_items(session, datetime.date.today())
-                                mynetdiary.save_item(session, Amount(number=args.add, is_grams=True), mynetdiary_parser.FoodParser(x), items)
+                                mynetdiary.save_item(session, types.Amount(number=args.add, is_grams=True), mynetdiary_parser.FoodParser(x), items)
 
                             else:
-                                print(format_food(x, args.detail, args.all))
+                                print(format_food(x, args.detail, args.all, args.json))
                         except BrokenPipeError:
                             return
                 #print("\n".join(x["recentBeanDesc"] for x in food_json['entries']))
@@ -397,7 +409,7 @@ def show_external_food(details):
     for k, v in details.items():
         print('    {}: {}'.format(k, v))
 
-def format_food(item, detail, all_nutrients):
+def format_food(item, detail, all_nutrients, is_json):
     result = []
 
     gramless = item.get("isGramless")
@@ -416,32 +428,31 @@ def format_food(item, detail, all_nutrients):
     else:
         serving_string = ''
 
-    result.append('{} (per {}) (serving {})'.format(parse_utils.lxml_to_text(item["descForUi"]), amount_string, serving_string))
+
+    name = parse_utils.lxml_to_text(item["descForUi"])
     parser = mynetdiary_parser.FoodParser(item)
-    if all_nutrients:
-        #print(json.dumps(item, indent=4))
+    if is_json:
+        data = dict(name=name, nutrients_per=amount_string, serving_size=serving_string)
 
         for item in sorted(item['details'], key=lambda x: float(x['nutrValue']), reverse=True):
-            result.append('    {} {}{}'.format(item['nutrDesc'], item['nutrValue'], item['units']))
+            data[item['nutrDesc']] = dict(value=item['nutrValue'], unit=item['units'])
 
-    elif detail:
-        for stat in item["details"]:
-            if stat["nutrDesc"] == "Calories":
-                result.append("    Calories: {}".format(stat["nutrValue"]))
+        return json.dumps(data, indent=4)
+    else:
+        result.append('{} (per {}) (serving {})'.format(name, amount_string, serving_string))
+        if all_nutrients:
+            #print(json.dumps(item, indent=4))
 
-        LOGGER.debug('Formatting food: %s', json.dumps(item, indent=4))
+            for item in sorted(item['details'], key=lambda x: float(x['nutrValue']), reverse=True):
+                result.append('    {} {}{}'.format(item['nutrDesc'], item['nutrValue'], item['units']))
 
-            # unit = item["dfSrv"]
-            # unit_name = unit["desc"]
-            # unit_number = unit["am"]
-            # unit_grams = unit["gmWgt"]
-            # result.append("    Amount: ({}/100 grams)".format(unit_number, unit_name, unit_grams))
-    return '\n'.join(result)
+        elif detail:
+            for stat in item["details"]:
+                if stat["nutrDesc"] == "Calories":
+                    result.append("    Calories: {}".format(stat["nutrValue"]))
 
-def lxml_to_text(html):
-    doc = lxml.html.fromstring(html)
-    doc = lxml.html.clean.clean_html(doc)
-    return doc.text_content()
+            LOGGER.debug('Formatting food: %s', json.dumps(item, indent=4))
+        return '\n'.join(result)
 
 def log_http():
     http.client.HTTPConnection.debuglevel = 1
@@ -460,10 +471,10 @@ class EntryFormatter(object):
 
     def format_column(self, entry):
         nutrition = entry.nutrition()
-        density = nutrition['Cals'] / entry.amount()
+        density = nutrition['Cals'] / entry.amount_value()
 
         energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
-        energy_calories_density = energy_calories / entry.amount()
+        energy_calories_density = energy_calories / entry.amount_value()
 
         columns = (
             ('name', entry.food_name().ljust(self.desc_width)),
