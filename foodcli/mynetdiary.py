@@ -116,11 +116,7 @@ def create_food(session, information):
     #print(response.content)
 
 def delete_food(session, bean_id):
-
-    raw_data = 'value={}'.format(bean_id)
-    #print(raw_data)
-
-    session.post('http://www.mynetdiary.com/retireUserFood.do', data=raw_data)
+    session.post('http://www.mynetdiary.com/retireUserFood.do', data=[('value', bean_id)])
 
 def fetch_nutrition(stream, session, start_date):
     headings = None
