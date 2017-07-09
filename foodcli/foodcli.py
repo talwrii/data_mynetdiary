@@ -5,7 +5,6 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import argparse
-import collections
 import contextlib
 import datetime
 import json
@@ -44,7 +43,6 @@ def build_parser():
 
     parsers = PARSER.add_subparsers(dest='command')
 
-
     history_parser = parsers.add_parser('history', help='')
     history_parser.add_argument('--debug', action='store_true', help='Print debug output')
     history_parser.add_argument('--start-date', type=parse_date, default='2012-01-01', help='Fetch information from this date')
@@ -53,6 +51,8 @@ def build_parser():
     items_parser.add_argument('--day', type=parse_date, help='Show items for this day', default=TODAY)
     items_parser.add_argument('--raw', action='store_true', help='Show raw data')
     items_parser.add_argument('--index', type=int, help='Select this index')
+    items_parser.add_argument('--amount', type=float, help='Amount of this item to add. Default to the item amount.')
+    items_parser.add_argument('--json', action='store_true', help='Output json data.')
 
     items_action = items_parser.add_mutually_exclusive_group()
     items_action.add_argument('--delete', action='store_true', help='Delete items')
@@ -80,15 +80,19 @@ def build_parser():
     food_parser_unit.add_argument('--json', action='store_true', help='Output data as json')
 
     total_parser = parsers.add_parser('total', help='Search foods and add them')
+
     new_food_parser = parsers.add_parser('new', help='Create a new food')
     new_food_parser.add_argument('--name', type=str)
     new_food_parser.add_argument('--file', type=str, help='Read food information from this file')
+    new_food_parser.add_argument('--expand', '-x', action='store_true', help='Expanded output')
+    new_food_parser.add_argument('--grams', type=float, help='Serving size in grams')
+    new_food_parser.add_argument('--salt', dest='sodium', type=salt_to_sodium, help='Serving size in grams')
 
     GRAM_UNITS = [
         'calories',
         'fat',
         'sodium',
-        'fibre',
+        'fiber',
         'sugar',
         'alcohol',
         'protein',
@@ -111,7 +115,7 @@ def build_parser():
     new_food_parser.add_argument('--potassium', type=float, default=0, nargs='*', help='Milligrams of potassium')
 
     # percent RDA
-    PERCENT_VIT = [['A', ' vitamin a'], 'B6', 'B12', ['C', ' vitamin c'], ['D', ''], 'E', 'K']
+    PERCENT_VIT = [['A', ' vitamin a'], 'B6', 'B12', ['C', ' vitamin c'], ['D', 'vitamin d'], 'E', 'K']
 
     PERCENT_MINERALS = [
         'calcium',
@@ -122,7 +126,7 @@ def build_parser():
         'folate',
         ['pan', ' panthothenic acid'],
         'phosphorus',
-        'magneisium',
+        'magnesium',
         'zinc',
         'selenium',
         'copper',
@@ -143,14 +147,46 @@ def build_parser():
     return PARSER
 
 
-def add_food(args):
-    if args.serving is None:
-        serving_name = 'Serving'
-        serving_grams = 100
-    else:
-        serving_name, serving_grams = args.serving
+MYNETDIARY_NUTR  = dict(
+    alcohol='alcoholEthylG',
+    sugar='sugarsG',
+    mono_un='monoUnsatFatG',
+    carbs='totalCarbsG',
+    chol='cholMg',
+    grams='vitaminCPercent',
 
-    ('customfoodname', args.name)
+
+    percent_C='vitaminCPercent',
+    percent_A='vitaminAPercent',
+    percent_D='vitaminDPercent',
+    percent_E='vitaminEPercent',
+    percent_B6='vitaminB6Percent',
+    percent_K='vitaminKPercent',
+    percent_phosphorus='phosphorusPercent',
+    percent_niacin='niacinPercent',
+    percent_copper='copperPercent',
+    percent_iron='ironPercent',
+    percent_folate='folatePercent',
+    percent_selenium='seleniumPercent',
+    percent_calcium='calciumPercent',
+    percent_zinc='zincPercent',
+    percent_riboflavin='riboflavinPercent',
+    percent_thiamin='thiaminPercent',
+    percent_manganese='manganesePercent',
+    percent_magnesium='magnesiumPercent',
+    fat='totalFatG',
+    starch='starchG',
+    percent_B12='vitaminB12Percent',
+    sodium='sodiumMg',
+    protein='proteinG',
+    caffeine='caffeineMg',
+    fiber='dietaryFiberG',
+    saturates='satFatG',
+    potassium='potassiumMg',
+    trans='transFatG',
+    poly_un='polyUnsatFatG',
+    percent_pan='panthothenicAcidPercent',
+    )
 
 # serving1name=amount
 # serving1weight=100
@@ -292,7 +328,29 @@ def main():
                     raw_information = json.load(stream)
 
                 food_information = load.parse_information(raw_information)
-                mynetdiary.create_food(session, food_information)
+            else:
+                food_information = dict(args._get_kwargs())
+                food_information.pop('file')
+                food_information.pop('command')
+                food_information.pop('config_dir')
+                food_information.pop('debug')
+                food_information.pop('expand')
+
+
+                name = food_information.pop('name', None)
+                food_information['customFoodName'] = name
+
+                for key, value in list(food_information.items()):
+                    if key in MYNETDIARY_NUTR:
+                        food_information[MYNETDIARY_NUTR[key]] = food_information.pop(key)
+
+                if args.grams:
+                    food_information['serving1Name'] = 'serving'
+                    food_information['serving1Weight'] = 100
+
+
+
+            mynetdiary.create_food(session, food_information)
         elif args.command == 'history':
             fetch_weights(session, args.start_date)
             with open("nutrition.csv", "w") as nutrition_csv:
@@ -300,7 +358,6 @@ def main():
         elif args.command == 'items':
             items = mynetdiary.get_eaten_items(session, args.day)
             parser = mynetdiary_parser.ItemsParser(items)
-
             with log_on_error('Raw items: %s', pprint.pformat(items)):
                 if args.raw:
                     print(json.dumps(items, indent=4))
@@ -310,22 +367,36 @@ def main():
 
                     formatter = EntryFormatter(parser.entries())
 
-                    for index, entry in enumerate(parser.entries()):
-                        if args.index and index != args.index:
-                            continue
+                    index = -1
+                    for entry in parser.entries():
 
                         if args.search:
                             if any(not re.search(s, entry.food_name()) for s in args.search):
                                 continue
 
+                        index += 1
+
+                        if args.index and index != args.index:
+                            continue
 
                         if args.delete:
                             mynetdiary.save_item(session, None, entry, items)
                         elif args.add:
                             todays_items = mynetdiary.get_eaten_items(session, datetime.date.today())
-                            mynetdiary.save_item(session, entry.amount(), entry, todays_items)
+                            amount = entry.amount()
+                            if args.amount is not None:
+                                amount = amount._replace(number=args.amount)
+                            mynetdiary.save_item(session, amount, entry, todays_items)
 
-                        print(formatter.format_column(entry))
+
+                        if args.json:
+                            output = dict(name=entry.food_name())
+                            output.update(entry.nutrition())
+                            output['amount'] = entry.amount()
+                            print(json.dumps(output))
+                        else:
+                            print(formatter.format_column(entry))
+
 
         elif args.command == 'food':
             food_specifier = ' '.join(args.name)
@@ -375,6 +446,17 @@ def main():
                             return
                 #print("\n".join(x["recentBeanDesc"] for x in food_json['entries']))
 
+        elif args.command == 'total':
+            today = datetime.date.today()
+            items = mynetdiary.get_eaten_items(session, today)
+            parser = mynetdiary_parser.ItemsParser(items)
+            formatter = EntryFormatter([parser.total()], True)
+            total_grams = 0
+            for x in parser.entries():
+                amount = x.amount()
+                if amount.is_grams:
+                    total_grams += amount.number
+            print(formatter.format_column(parser.total(), amount=total_grams))
         elif args.command == 'ext-food':
             if args.source == 'mfp':
                 if args.url is not None:
@@ -464,21 +546,31 @@ def log_http():
 
 
 class EntryFormatter(object):
-    def __init__(self, entries):
+    def __init__(self, entries, expand=False):
         self.desc_width = max([len(x.food_name()) for x in entries])
         self.amount_width = max([len(x.amount_string()) for x in entries])
         self.columns_printed = False
+        self.expand = expand
 
-    def format_column(self, entry):
+    def format_column(self, entry, amount=None):
         nutrition = entry.nutrition()
         density = nutrition['Cals'] / entry.amount_value()
 
+        if amount is not None:
+            amount_value = amount
+            amount = '{} {}'.format(amount, entry.amount_name())
+        else:
+            amount_value = entry.amount_value()
+            amount = '{} {}'.format(amount_value, entry.amount_name())
+
+
         energy_calories = nutrition['Cals'] - nutrition['Protein'] * PROTEIN_CALS - nutrition['Fiber'] * FIBER_CALS
-        energy_calories_density = energy_calories / entry.amount_value()
+        energy_calories_density = energy_calories / amount_value
+
 
         columns = (
             ('name', entry.food_name().ljust(self.desc_width)),
-            ('amount', entry.amount_string().ljust(self.amount_width)),
+            ('amount', amount.ljust(self.amount_width)),
             ('calories', '{:8.0f}'.format(nutrition['Cals'])),
             ('non-protein calories', '{:5.1f}'.format(energy_calories)),
             ('energy_calorie_density', '{:5.1f}'.format(energy_calories_density)),
@@ -490,12 +582,19 @@ class EntryFormatter(object):
         )
         result = []
 
-        if not self.columns_printed:
-            result.append(':'.join([c[0] for c in columns]))
-            self.columns_printed = True
+        if self.expand:
+            for k, v in columns:
+                result.append('{} {}'.format(k, v))
+        else:
+            if not self.columns_printed:
+                result.append(':'.join([c[0] for c in columns]))
+                self.columns_printed = True
 
-        result.append(':'.join([c[1] for c in columns]))
+            result.append(':'.join([c[1] for c in columns]))
         return '\n'.join(result)
+
+def salt_to_sodium(amount):
+    return float(amount) / 2.5
 
 
 PROTEIN_CALS = 4

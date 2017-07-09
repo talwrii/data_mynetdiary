@@ -98,7 +98,7 @@ def find_foods(session, name):
 def create_food(session, information):
     required_keys = set(['customFoodName'])
 
-    allowed_keys = ['customFoodName', 'serving1Name', 'serving1Weight', 'foodGroupId', 'calories', 'totalFatG', 'satFatG', 'polyUnsatFatG', 'monoUnsatFatG', 'transFatG', 'cholMg', 'sodiumMg', 'totalCarbsG', 'dietaryFiberG', 'sugarsG', 'sugarAlcoholG', 'proteinG', 'vitaminAPercent', 'vitaminCPercent', 'calciumPercent', 'ironPercent', 'caffeineMg', 'waterG', 'alcoholEthylG', 'starchG', 'potassiumMg', 'vitaminDPercent', 'vitaminB6Percent', 'vitaminB12Percent', 'vitaminEPercent', 'vitaminKPercent', 'thiaminPercent', 'riboflavinPercent', 'niacinPercent', 'folatePercent', 'panthothenicAcidPercent', 'phosphorusPercent', 'magnesiumPercent', 'zincPercent', 'seleniumPercent', 'cooperPercent', 'manganesePercent', 'customFoodId', 'contributed', 'sorceFoodId']
+    allowed_keys = ['customFoodName', 'serving1Name', 'serving1Weight', 'foodGroupId', 'calories', 'totalFatG', 'satFatG', 'polyUnsatFatG', 'monoUnsatFatG', 'transFatG', 'cholMg', 'sodiumMg', 'totalCarbsG', 'dietaryFiberG', 'sugarsG', 'sugarAlcoholG', 'proteinG', 'vitaminAPercent', 'vitaminCPercent', 'calciumPercent', 'ironPercent', 'caffeineMg', 'waterG', 'alcoholEthylG', 'starchG', 'potassiumMg', 'vitaminDPercent', 'vitaminB6Percent', 'vitaminB12Percent', 'vitaminEPercent', 'vitaminKPercent', 'thiaminPercent', 'riboflavinPercent', 'niacinPercent', 'folatePercent', 'panthothenicAcidPercent', 'phosphorusPercent', 'magnesiumPercent', 'zincPercent', 'seleniumPercent', 'copperPercent', 'manganesePercent', 'customFoodId', 'contributed', 'sorceFoodId']
 
     missing_keys = set(required_keys) - set(information.keys())
     if missing_keys:

@@ -1,4 +1,7 @@
+import itertools
+
 from . import parse_utils, types
+
 
 class ItemsParser(object):
     def __init__(self, data):
@@ -10,6 +13,10 @@ class ItemsParser(object):
     def entries(self):
         return [HistoryParser(self.headers(), x) for x in self.data['beanEntries'] if 'bean' in x]
 
+    def total(self):
+        return Totals(self.headers(), self.data['beanGridTotals'])
+
+
 class FoodParser(object):
     "Parse the entry for a type of food."
     def __init__(self, data):
@@ -17,8 +24,11 @@ class FoodParser(object):
 
     def amount_string(self, amount=None):
         amount = amount or self.data['dfSrv']['am']
-        amount_name = self.data['dfSrv']['desc']
+        amount_name = self.amount_name()
         return '{} {}'.format(amount, amount_name),
+
+    def amount_name(self):
+        return self.data['dfSrv']['desc']
 
     def bean_id(self):
         return self.data['beanId']
@@ -65,7 +75,36 @@ class HistoryParser(object):
         return amount_string
 
     def nutrition(self):
-         return dict(zip(self.headers, map(comma_float, [x or '-1' for x in self.data['nutrValues']])))
+        return dict(zip(self.headers, map(comma_float, [x or '-1' for x in self.data['nutrValues']])))
+
+    def amount_name(self):
+        return ''.join(reversed(
+            list(itertools.takewhile(lambda x: x not in '01234567890', reversed(self.data['amountResolved'])))))
+
+class Totals(object):
+    def __init__(self, headers, data):
+        self.data = data
+        self.headers = headers
+
+    def nutrition(self):
+        return dict(zip(self.headers, map(comma_float, [x or '-1' for x in self.data['totalNutrValues']])))
+
+    @staticmethod
+    def food_name():
+        return 'Total'
+
+    @staticmethod
+    def amount_string():
+        return ''
+
+    @staticmethod
+    def amount_value():
+        return 1.0
+
+    @staticmethod
+    def amount_name():
+        return 'g'
+
 
 def parse_amount(string):
     number = parse_utils.initial_digits(string)
