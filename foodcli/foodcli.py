@@ -73,7 +73,7 @@ def build_parser():
     food_parser.add_argument('--delete', action='store_true', help='Delete this food')
     food_parser.add_argument('--index', type=int, help='Only show this item')
     food_parser.add_argument('--add', type=float, help='Add this many units of this food')
-    food_parser.add_argument('--day', type=parse_date, help='Day to add food')
+    food_parser.add_argument('--day', type=parse_date, help='Day to add food', default=datetime.date.today())
 
     food_parser_unit = food_parser.add_mutually_exclusive_group()
     food_parser_unit.add_argument('--detail', action='store_true', help='Output information about foods')
