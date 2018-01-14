@@ -579,6 +579,7 @@ class EntryFormatter(object):
             ('fat', '{:5.1f}'.format(nutrition['Fat'])),
             ('protein', '{:5.1f}'.format(nutrition['Protein'])),
             ('fiber', '{:5.1f}'.format(nutrition['Fiber'])),
+            ('sodium', '{:5.1f}'.format(nutrition['Sodium'])),
             ('density', '{:5.1f}'.format(density))
         )
         result = []
